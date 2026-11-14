@@ -8,8 +8,8 @@ import (
 	"github.com/cloudwego/eino-ext/callbacks/langfuse"
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/spf13/cobra"
-	"github.com/tk103331/eino-cli/agent"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/agent"
+	"github.com/tk103331/oni3/config"
 )
 
 // printHeader prints a formatted header for better visual separation
@@ -51,7 +51,7 @@ var runCmd = &cobra.Command{
 		initStart := time.Now()
 
 		if cfg.Settings.Langfuse != nil {
-			handler, flusher := langfuse.NewLangfuseHandler(cfg.Settings.Langfuse)
+			handler, flusher := langfuse.NewLangfuseHandler(cfg.Settings.Langfuse.SDKConfig())
 			defer flusher()
 			callbacks.AppendGlobalHandlers(handler) // Set langfuse as global callback
 			fmt.Printf(" ✓ Langfuse enabled")

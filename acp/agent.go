@@ -1,4 +1,4 @@
-// Package acp implements the Agent Client Protocol (ACP) for Eino CLI using
+// Package acp implements the Agent Client Protocol (ACP) for Oni3 using
 // the official Go SDK (github.com/coder/acp-go-sdk).
 //
 // ACP is an open standard (https://agentclientprotocol.com) that standardizes
@@ -15,13 +15,13 @@ import (
 
 	"github.com/cloudwego/eino/schema"
 	"github.com/coder/acp-go-sdk"
-	"github.com/tk103331/eino-cli/agent"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/logger"
-	"github.com/tk103331/eino-cli/version"
+	"github.com/tk103331/oni3/agent"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/version"
 )
 
-// Service is the Eino CLI ACP agent. It bridges ACP sessions to the
+// Service is the Oni3 ACP agent. It bridges ACP sessions to the
 // configured Eino ReAct agent and streams turns to the client.
 type Service struct {
 	agentName string
@@ -47,6 +47,10 @@ type session struct {
 	lastStartKey   string // consecutive duplicate start events dedupe key
 	lastToolCallID acp.ToolCallId
 	finalized      bool // whether the current tool call already got a final update
+
+	// toolCalls maps the tool call id of the agent to the id reported to the
+	// client, so a result is paired with the call it belongs to.
+	toolCalls map[string]acp.ToolCallId
 }
 
 // NewService creates an ACP agent bound to the given configured agent name.
@@ -72,7 +76,7 @@ func (s *Service) Initialize(ctx context.Context, params acp.InitializeRequest) 
 	return acp.InitializeResponse{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		AgentInfo: &acp.Implementation{
-			Name:    "eino-cli",
+			Name:    "oni3",
 			Version: version.Version,
 		},
 		AgentCapabilities: acp.AgentCapabilities{
@@ -84,7 +88,7 @@ func (s *Service) Initialize(ctx context.Context, params acp.InitializeRequest) 
 	}, nil
 }
 
-// NewSession creates a session backed by the configured Eino agent.
+// NewSession creates a session backed by the configured agent.
 func (s *Service) NewSession(ctx context.Context, params acp.NewSessionRequest) (acp.NewSessionResponse, error) {
 	einoAgent, err := agent.NewFactory(s.cfg).CreateAgent(s.agentName)
 	if err != nil {
@@ -135,6 +139,7 @@ func (s *Service) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Pro
 	session.lastStartKey = ""
 	session.lastToolCallID = ""
 	session.finalized = false
+	session.toolCalls = make(map[string]acp.ToolCallId)
 	s.mu.Unlock()
 
 	defer func() {
@@ -272,6 +277,9 @@ func (s *Service) makeToolCallback(ctx context.Context, sid string, session *ses
 			// The eino callback layer can emit the same tool start event
 			// more than once; skip consecutive duplicates.
 			startKey := info.Name + "|" + info.Arguments
+			if info.CallID != "" {
+				startKey = info.CallID
+			}
 			if startKey == session.lastStartKey {
 				s.mu.Unlock()
 				return
@@ -281,6 +289,12 @@ func (s *Service) makeToolCallback(ctx context.Context, sid string, session *ses
 			session.toolSeq++
 			toolCallID := acp.ToolCallId(fmt.Sprintf("call-%s-%d", sid, session.toolSeq))
 			session.lastToolCallID = toolCallID
+			if info.CallID != "" {
+				if session.toolCalls == nil {
+					session.toolCalls = make(map[string]acp.ToolCallId)
+				}
+				session.toolCalls[info.CallID] = toolCallID
+			}
 			s.mu.Unlock()
 
 			opts := []acp.ToolCallStartOpt{
@@ -296,14 +310,27 @@ func (s *Service) makeToolCallback(ctx context.Context, sid string, session *ses
 		case "end", "error":
 			s.mu.Lock()
 			toolCallID := session.lastToolCallID
-			if toolCallID == "" || session.finalized {
+			// A result with a tool call id belongs to that call, even when
+			// other calls ran in parallel.
+			paired := false
+			if info.CallID != "" {
+				if id, ok := session.toolCalls[info.CallID]; ok {
+					toolCallID = id
+					paired = true
+				}
+			}
+			if toolCallID == "" || (!paired && session.finalized) {
 				// No start event seen, or this call already got its final
 				// update: the eino callback layer may emit duplicate
 				// completion/error events for the same call.
 				s.mu.Unlock()
 				return
 			}
-			session.finalized = true
+			if paired {
+				delete(session.toolCalls, info.CallID)
+			} else {
+				session.finalized = true
+			}
 			s.mu.Unlock()
 
 			var update acp.SessionUpdate

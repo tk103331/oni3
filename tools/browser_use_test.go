@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -12,11 +12,11 @@ import (
 // used to open a Chrome window because the upstream constructor initializes
 // the browser eagerly.
 func TestBrowserUseToolIsLazy(t *testing.T) {
-	tl, err := NewBrowserUseTool("browseruse", config.Tool{Type: "browseruse"})
+	tl, err := NewBrowserUseTool("browser_use", config.Tool{Type: "browser_use"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bt, ok := tl.(*browserTool)
+	bt, ok := tl.(*browserUseTool)
 	if !ok {
 		t.Fatalf("unexpected tool type %T", tl)
 	}
@@ -28,8 +28,8 @@ func TestBrowserUseToolIsLazy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Name != "browseruse" {
-		t.Fatalf("tool name = %q, want browseruse", info.Name)
+	if info.Name != "browser_use" {
+		t.Fatalf("tool name = %q, want browser_use", info.Name)
 	}
 	if info.Desc == "" {
 		t.Fatal("description must be set")
@@ -61,14 +61,14 @@ func TestBrowserUseToolIsLazy(t *testing.T) {
 
 func TestBrowserUseToolConfig(t *testing.T) {
 	var cfg config.Tool
-	if err := yaml.Unmarshal([]byte("type: browseruse\nconfig:\n  headless: true\n  chrome_path: /opt/chrome\n  proxy: http://proxy:8080\n  args: [--no-sandbox]\n"), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte("type: browser_use\nconfig:\n  headless: true\n  chrome_path: /opt/chrome\n  proxy: http://proxy:8080\n  args: [--no-sandbox]\n"), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	tl, err := NewBrowserUseTool("browseruse", cfg)
+	tl, err := NewBrowserUseTool("browser_use", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bt := tl.(*browserTool)
+	bt := tl.(*browserUseTool)
 	if !bt.headless {
 		t.Fatal("headless should be enabled from config")
 	}

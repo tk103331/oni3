@@ -3,8 +3,8 @@ package agent
 import (
 	"testing"
 
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/state"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/state"
 )
 
 // /model choices are remembered for agents that follow the default model.
@@ -18,23 +18,23 @@ func TestRememberedModelAppliedToDefaultModelAgent(t *testing.T) {
 			"other": {},
 		},
 		Agents: map[string]config.Agent{
-			"Eino":   {Model: "base"},
-			"pinned": {Model: "other"},
+			"OniThree": {Model: "base"},
+			"pinned":   {Model: "other"},
 		},
 	}
 
-	if got := rememberedModel(cfg, "Eino"); got != "" {
+	if got := rememberedModel(cfg, "OniThree"); got != "" {
 		t.Fatalf("no remembered model expected, got %q", got)
 	}
 
-	rememberModel(cfg, "Eino", "other")
-	if got := rememberedModel(cfg, "Eino"); got != "other" {
+	rememberModel(cfg, "OniThree", "other")
+	if got := rememberedModel(cfg, "OniThree"); got != "other" {
 		t.Fatalf("remembered model = %q, want other", got)
 	}
 
 	// Switching back to the configured default forgets the override.
-	rememberModel(cfg, "Eino", "base")
-	if got := state.RememberedModel("Eino"); got != "" {
+	rememberModel(cfg, "OniThree", "base")
+	if got := state.RememberedModel("OniThree"); got != "" {
 		t.Fatalf("override should be cleared, got %q", got)
 	}
 
@@ -55,12 +55,12 @@ func TestRememberedModelIgnoredWhenStale(t *testing.T) {
 	cfg := &config.Config{
 		DefaultModel: "base",
 		Models:       map[string]config.Model{"base": {}},
-		Agents:       map[string]config.Agent{"Eino": {Model: "base"}},
+		Agents:       map[string]config.Agent{"OniThree": {Model: "base"}},
 	}
-	if err := state.SetRememberedModel("Eino", "removed"); err != nil {
+	if err := state.SetRememberedModel("OniThree", "removed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := rememberedModel(cfg, "Eino"); got != "" {
+	if got := rememberedModel(cfg, "OniThree"); got != "" {
 		t.Fatalf("stale model must be ignored, got %q", got)
 	}
 }

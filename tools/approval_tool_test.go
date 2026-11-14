@@ -7,8 +7,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 // classifiedTool flags calls whose arguments contain "danger".
@@ -111,6 +111,21 @@ func TestApprovalAllModeCoversPlainTools(t *testing.T) {
 	}
 }
 
+func TestInteractiveNameDoesNotExemptOtherImplementations(t *testing.T) {
+	inner := &plainTool{name: AskUserToolName}
+	wrapped, err := WithApproval(inner, approval.Policy{Mode: approval.ModeAll})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host := &fakeHost{approved: false}
+	if _, err := wrapped.InvokableRun(WithHost(context.Background(), host), `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if host.approvalCalls != 1 || inner.runs != 0 {
+		t.Fatal("an ordinary tool bypassed approval using an interactive tool name")
+	}
+}
+
 func TestApprovalTransparentCases(t *testing.T) {
 	// No host: run/ACP mode keeps working without prompts.
 	inner := &classifiedTool{name: "shell"}
@@ -126,8 +141,8 @@ func TestApprovalTransparentCases(t *testing.T) {
 		t.Fatalf("off mode should not wrap: %v %v", same, err)
 	}
 
-	// Interactive tools are never gated.
-	ask, err := NewAskUserTool(AskUserToolName, config.Tool{})
+	// Interactive tools are never gated, including configured aliases.
+	ask, err := NewAskUserTool("clarify", config.Tool{})
 	if err != nil {
 		t.Fatal(err)
 	}

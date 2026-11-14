@@ -10,8 +10,8 @@ import (
 	getTool "github.com/cloudwego/eino-ext/components/tool/httprequest/get"
 	postTool "github.com/cloudwego/eino-ext/components/tool/httprequest/post"
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 // NewHTTPRequestTool creates HTTP request tool

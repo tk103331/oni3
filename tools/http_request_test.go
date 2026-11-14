@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 	"gopkg.in/yaml.v3"
 )
 
@@ -25,13 +25,13 @@ func newHTTPRequestTestTool(t *testing.T, name, spec string) tool.InvokableTool 
 }
 
 func TestHTTPRequestToolUsesConfiguredName(t *testing.T) {
-	tl := newHTTPRequestTestTool(t, "httprequest", "type: httprequest\n")
+	tl := newHTTPRequestTestTool(t, "http_request", "type: http_request\n")
 
 	info, err := tl.Info(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Name != "httprequest" {
+	if info.Name != "http_request" {
 		t.Fatalf("tool name = %q, want the configured name", info.Name)
 	}
 
@@ -45,7 +45,7 @@ func TestHTTPRequestToolUsesConfiguredName(t *testing.T) {
 }
 
 func TestHTTPRequestToolFlagsWrites(t *testing.T) {
-	tl := newHTTPRequestTestTool(t, "webhook", "type: httprequest\nconfig:\n  method: post\n")
+	tl := newHTTPRequestTestTool(t, "webhook", "type: http_request\nconfig:\n  method: post\n")
 
 	info, err := tl.Info(context.Background())
 	if err != nil {

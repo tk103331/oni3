@@ -7,8 +7,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tk103331/eino-cli/session"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/session"
+	"github.com/tk103331/oni3/tools"
 )
 
 func TestSetTranscript(t *testing.T) {

@@ -42,9 +42,9 @@ func TestLoadConfigMergesSkillFiles(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	einoDir := filepath.Join(home, ".eino-cli", "skills")
+	dataDir := filepath.Join(home, ".oni3", "skills")
 	agentsDir := filepath.Join(home, ".agents", "skills")
-	for _, dir := range []string{einoDir, agentsDir} {
+	for _, dir := range []string{dataDir, agentsDir} {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -55,8 +55,8 @@ func TestLoadConfigMergesSkillFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(filepath.Join(einoDir, "alpha.md"), "Eino alpha prompt")
-	write(filepath.Join(einoDir, "shared.md"), "Eino shared prompt")
+	write(filepath.Join(dataDir, "alpha.md"), "Oni3 alpha prompt")
+	write(filepath.Join(dataDir, "shared.md"), "Oni3 shared prompt")
 	write(filepath.Join(agentsDir, "beta.md"), "Agents beta prompt")
 	write(filepath.Join(agentsDir, "shared.md"), "Agents shared prompt")
 
@@ -77,14 +77,14 @@ skills:
 	}
 
 	// Both user directories are loaded.
-	if cfg.Skills["alpha"].System != "Eino alpha prompt" {
-		t.Fatalf("eino-cli skill missing: %+v", cfg.Skills)
+	if cfg.Skills["alpha"].System != "Oni3 alpha prompt" {
+		t.Fatalf("oni3 skill missing: %+v", cfg.Skills)
 	}
 	if cfg.Skills["beta"].System != "Agents beta prompt" {
 		t.Fatalf("agents skill missing: %+v", cfg.Skills)
 	}
-	// ~/.eino-cli/skills has priority on name clashes.
-	if cfg.Skills["shared"].System != "Eino shared prompt" {
+	// ~/.oni3/skills has priority on name clashes.
+	if cfg.Skills["shared"].System != "Oni3 shared prompt" {
 		t.Fatalf("first directory should win: %+v", cfg.Skills)
 	}
 	// Config-defined skills are still merged.

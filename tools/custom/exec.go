@@ -13,16 +13,16 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 // ExecConfig execution tool configuration structure
 type ExecConfig struct {
-	Cmd     string            `yaml:"cmd"`     // Execution command template
-	WorkDir string            `yaml:"workdir"` // Working directory
-	Env     map[string]string `yaml:"env"`     // Environment variables
-	Timeout int               `yaml:"timeout"` // Timeout in seconds
+	Cmd     string            `yaml:"cmd"`      // Execution command template
+	WorkDir string            `yaml:"work_dir"` // Working directory
+	Env     map[string]string `yaml:"env"`      // Environment variables
+	Timeout int               `yaml:"timeout"`  // Timeout in seconds
 }
 
 // ExecTool execution tool implementation
@@ -40,8 +40,8 @@ func NewExecTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
 		if cmdValue, exists := cfg.Config["cmd"]; exists {
 			execConfig.Cmd = cmdValue.String()
 		}
-		if workdirValue, exists := cfg.Config["workdir"]; exists {
-			execConfig.WorkDir = workdirValue.String()
+		if workDirValue, exists := cfg.Config["work_dir"]; exists {
+			execConfig.WorkDir = workDirValue.String()
 		}
 		if timeoutValue, exists := cfg.Config["timeout"]; exists {
 			execConfig.Timeout = timeoutValue.Int()
@@ -76,34 +76,11 @@ func NewExecTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
 		Desc: desc,
 	}
 
-	// Add parameter information
-	params := make(map[string]*schema.ParameterInfo)
-	for _, param := range cfg.Params {
-		// Convert string type to schema.DataType
-		var dataType schema.DataType
-		switch param.Type {
-		case "string":
-			dataType = schema.String
-		case "number":
-			dataType = schema.Number
-		case "integer":
-			dataType = schema.Integer
-		case "boolean":
-			dataType = schema.Boolean
-		case "array":
-			dataType = schema.Array
-		case "object":
-			dataType = schema.Object
-		default:
-			dataType = schema.String
-		}
-
-		params[param.Name] = &schema.ParameterInfo{
-			Type: dataType,
-			Desc: param.Description,
-		}
+	params, err := toolParameters(cfg.Parameters)
+	if err != nil {
+		return nil, err
 	}
-	toolInfo.ParamsOneOf = schema.NewParamsOneOfByParams(params)
+	toolInfo.ParamsOneOf = params
 
 	return &ExecTool{
 		info:       toolInfo,

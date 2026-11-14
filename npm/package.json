@@ -1,11 +1,10 @@
 {
-  "name": "eino-cli",
+  "name": "oni3",
   "version": "0.3.0",
-  "description": "Eino CLI — AI Agent TUI with tools, MCP and ACP support, built on Eino",
+  "description": "Oni3 — AI Agent TUI with tools, MCP and ACP support, built on Eino",
   "license": "MIT",
   "bin": {
-    "eino": "bin/eino.js",
-    "eino-cli": "bin/eino.js"
+    "oni3": "bin/oni3.js"
   },
   "files": [
     "bin",
@@ -21,11 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/tk103331/eino-cli.git"
+    "url": "git+https://github.com/tk103331/oni3.git"
   },
-  "homepage": "https://github.com/tk103331/eino-cli",
+  "homepage": "https://github.com/tk103331/oni3",
   "bugs": {
-    "url": "https://github.com/tk103331/eino-cli/issues"
+    "url": "https://github.com/tk103331/oni3/issues"
   },
   "keywords": [
     "ai",
@@ -33,6 +32,7 @@
     "cli",
     "tui",
     "acp",
+    "oni3",
     "eino"
   ]
 }

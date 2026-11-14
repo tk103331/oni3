@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // Manager MCP manager, responsible for managing all MCP clients and tools

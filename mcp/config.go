@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // ValidateConfig validates MCP configuration
@@ -38,22 +38,24 @@ func ValidateConfig(cfg *config.Config) error {
 
 // validateServerConfig validates a single MCP server configuration
 func validateServerConfig(serverName string, serverConfig config.MCPServer) error {
-	// Validate server name
-	if strings.TrimSpace(serverName) == "" {
-		return NewMCPError("validate", serverName, "",
-			fmt.Errorf("MCP server name cannot be empty"))
+	if err := config.ValidateMCPServerName(serverName); err != nil {
+		return NewMCPError("validate", serverName, "", err)
 	}
 
-	// Validate command or URL
-	if serverConfig.Cmd == "" && serverConfig.URL == "" {
-		return NewMCPError("validate", serverName, "",
-			fmt.Errorf("MCP server must specify cmd or url"))
+	if err := config.ValidateMCPType(serverConfig.Type); err != nil {
+		return NewMCPError("validate", serverName, "", err)
 	}
-
-	// If both cmd and url are specified, return error
-	if serverConfig.Cmd != "" && serverConfig.URL != "" {
-		return NewMCPError("validate", serverName, "",
-			fmt.Errorf("MCP server cannot specify both cmd and url"))
+	switch serverConfig.Type {
+	case config.MCPTypeStdio:
+		if serverConfig.Cmd == "" || serverConfig.URL != "" {
+			return NewMCPError("validate", serverName, "",
+				fmt.Errorf("stdio MCP server must specify cmd and cannot specify url"))
+		}
+	case config.MCPTypeSSE, config.MCPTypeStreamableHTTP:
+		if serverConfig.URL == "" || serverConfig.Cmd != "" {
+			return NewMCPError("validate", serverName, "",
+				fmt.Errorf("%s MCP server must specify url and cannot specify cmd", serverConfig.Type))
+		}
 	}
 
 	// Validate command path

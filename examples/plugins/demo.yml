@@ -1,0 +1,16 @@
+# Requires a local Ollama instance with qwen3 installed.
+# eino --config examples/plugins/demo.yml agent --agent demo__helper
+providers:
+  local:
+    type: ollama
+    base_url: http://localhost:11434
+
+default_model: demo__fast
+
+plugins:
+  demo:
+    path: ./demo.js # relative to this config file, independent of --cwd
+    timeout: 30
+    memory_limit_mb: 64
+    config:
+      greeting: 你好

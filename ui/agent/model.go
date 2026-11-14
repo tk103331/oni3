@@ -3,16 +3,17 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/glamour"
-	glamouransi "github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/tk103331/oni3/agent"
 )
 
 // MessageType represents the type of a message
@@ -42,6 +43,7 @@ type Message struct {
 	Type       MessageType
 	Content    string
 	Name       string     // Tool name (only used for tool messages)
+	CallID     string     // Tool call id, pairs a call with its result
 	ToolStatus ToolStatus // Status of tool execution (only used for tool messages)
 	Arguments  string     // Tool arguments (only used for tool messages)
 	Result     string     // Tool result (only used for tool messages)
@@ -102,6 +104,7 @@ type ViewModel struct {
 	todos          []TodoItem
 	todosCollapsed bool
 	question       *questionState
+	provider       *providerState
 
 	// Efficient line-based rendering cache: rebuilt only when content
 	// changes (dirty) and at most once per renderInterval while streaming.
@@ -126,11 +129,14 @@ type ErrorMsg string
 type NoticeMsg string
 type ToolStartMsg struct {
 	Name      string
+	CallID    string
 	Arguments string
 }
 type ToolEndMsg struct {
 	Name   string
+	CallID string
 	Result string
+	Failed bool
 }
 
 // Task statuses shown in the TUI task panel.
@@ -345,6 +351,25 @@ func (m *ViewModel) finishQuestion(answer string) {
 	m.appendCommandMessage(text, false)
 }
 
+// clearQuestion dismisses a pending question without an answer. The waiting
+// tool is released so it does not block on a reply that will never come.
+func (m *ViewModel) clearQuestion() {
+	q := m.question
+	if q == nil {
+		return
+	}
+	m.question = nil
+	m.input = ""
+	m.cursor = 0
+	if q.reply != nil {
+		select {
+		case q.reply <- "":
+		default: // the tool already gave up
+		}
+	}
+	m.markDirty()
+}
+
 // handleQuestionKey routes keys to the pending ask_user question. It returns
 // false when the key should keep its normal meaning (e.g. arrows with no
 // options to choose from).
@@ -466,6 +491,7 @@ func (m *ViewModel) clearConversation() {
 
 // clearChat empties the conversation, keeping the input intact.
 func (m *ViewModel) clearChat() {
+	m.closeProvider()
 	m.messages = nil
 	m.streamingContent = ""
 	m.reasoningContent = ""
@@ -508,45 +534,15 @@ func NewViewModel(onSendMsg func(string) error) *ViewModel {
 // ensureRenderer creates (or recreates) the markdown renderer for a width
 // and terminal theme.
 func (m *ViewModel) ensureRenderer() {
-	width := m.width - 10
-	if width < 40 {
-		width = 40
-	}
+	// Leave two cells for the conversation indent and two at the right edge.
+	width := maxInt(m.width-4, 1)
 	dark := m.darkMode
 	if m.renderer != nil && m.renderWidth == width && m.renderDark == dark {
 		return
 	}
 
-	// Base on the builtin dark/light style matching the terminal, then fix
-	// readability and density:
-	//   - document color ("252"/"0" grays) removed so body text inherits the
-	//     terminal foreground and stays readable on any theme;
-	//   - document margin (2) and surrounding newlines removed — message
-	//     spacing is handled by the message renderer itself;
-	//   - code block margin tightened.
-	cfg := styles.DarkStyleConfig
-	if !dark {
-		cfg = styles.LightStyleConfig
-	}
-	cfg.Document.Color = nil
-	cfg.Document.BlockPrefix = ""
-	cfg.Document.BlockSuffix = ""
-	cfg.Document.Margin = nil
-	cfg.CodeBlock.Margin = nil
-
-	// Headings and links follow the active theme.
-	primary := m.theme.Primary
-	accent := m.theme.Accent
-	for _, h := range []*glamouransi.StyleBlock{
-		&cfg.Heading, &cfg.H1, &cfg.H2, &cfg.H3, &cfg.H4, &cfg.H5, &cfg.H6,
-	} {
-		h.Color = &primary
-	}
-	cfg.Link.Color = &accent
-	cfg.LinkText.Color = &accent
-
 	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStyles(cfg),
+		glamour.WithStyles(markdownStyles(m.theme, dark)),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
@@ -666,22 +662,22 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case CancelQuestionMsg:
-		if m.question != nil {
-			m.question = nil
-			m.input = ""
-			m.cursor = 0
-			m.markDirty()
-		}
+		m.clearQuestion()
 		return m, nil
 
 	case TodoUpdateMsg:
 		m.updateTodos(msg.Items)
 		return m, nil
 
+	case providerModelsMsg:
+		m.receiveProviderModels(msg)
+		return m, nil
+
 	case tea.KeyMsg:
 		// Ctrl+C quits only after a second confirmation press.
 		if msg.Type == tea.KeyCtrlC {
 			if m.confirmQuit {
+				m.closeProvider()
 				return m, tea.Quit
 			}
 			m.confirmQuit = true
@@ -692,6 +688,10 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Any other key cancels the pending quit.
 			m.confirmQuit = false
 			m.markDirty()
+		}
+
+		if m.provider != nil {
+			return m, m.handleProviderKey(msg)
 		}
 
 		// A pending ask_user question owns the keyboard: arrows pick an
@@ -845,7 +845,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.input = ""
 						m.cursor = 0
 						m.paletteSel = 0
-						m.executeSlashCommand(item.fill)
+						return m, tea.Batch(m.executeSlashCommand(item.fill), m.clampScroll())
 					} else {
 						// Fill the command and continue typing its argument.
 						m.input = item.fill
@@ -859,8 +859,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.input = ""
 				m.cursor = 0
 				m.paletteSel = 0
-				m.executeSlashCommand(line)
-				return m, nil
+				return m, m.executeSlashCommand(line)
 			}
 
 			// A finished task list folds away as the next turn begins.
@@ -957,23 +956,25 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushReasoning()
 
 		// Tool execution started - create waiting state message with timestamp.
-		// The eino callback layer can emit the same start event more than
-		// once (possibly interleaved with other events); skip duplicates
-		// or a zombie "running..." line would stay behind after completion.
+		// The tool call id identifies the call, so a repeated event for the
+		// same call cannot leave a zombie "running..." line behind.
 		for i := len(m.messages) - 1; i >= 0; i-- {
 			msg2 := m.messages[i]
-			if msg2.Type == ToolStartMessage && msg2.ToolStatus != ToolWaiting {
-				break // A finished tool call marks the end of the last batch
+			if msg2.Type != ToolStartMessage {
+				continue
 			}
-			if msg2.Type == ToolStartMessage &&
-				msg2.Name == msg.Name &&
-				msg2.Arguments == msg.Arguments {
+			if msg.CallID != "" && msg2.CallID == msg.CallID {
+				return m, nil
+			}
+			if msg.CallID == "" && msg2.ToolStatus == ToolWaiting &&
+				msg2.Name == msg.Name && msg2.Arguments == msg.Arguments {
 				return m, nil
 			}
 		}
 		m.messages = append(m.messages, Message{
 			Type:       ToolStartMessage,
 			Name:       msg.Name,
+			CallID:     msg.CallID,
 			ToolStatus: ToolWaiting,
 			Arguments:  msg.Arguments,
 			StartTime:  time.Now().Unix(),
@@ -982,45 +983,31 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case ToolEndMsg:
-		// Tool execution ended - update every waiting message for this tool
-		// (duplicate start events from the eino callback layer describe the
-		// same call, so they all get the same final status).
+		// Tool execution ended - update the waiting message of that call.
 		toolResult := strings.TrimSpace(msg.Result)
 
 		newStatus := ToolSuccess
-		if looksLikeError(toolResult) {
+		if msg.Failed || looksLikeError(toolResult) {
 			newStatus = ToolError
 		}
 
-		updated := false
-		for i := len(m.messages) - 1; i >= 0; i-- {
-			msg2 := m.messages[i]
-			if msg2.Type != ToolStartMessage || msg2.ToolStatus != ToolWaiting {
-				continue
-			}
-			if msg2.Name != msg.Name {
-				continue
-			}
-			// Complete every waiting call for this tool: duplicates from the
-			// callback layer must not leave zombie "running..." lines behind.
-			m.messages[i].ToolStatus = newStatus
-			m.messages[i].Result = toolResult
-			m.messages[i].EndTime = time.Now().Unix()
-			updated = true
-		}
-
-		if updated {
+		idx := m.findWaitingTool(msg.Name, msg.CallID)
+		if idx < 0 {
+			// If no waiting tool message was found, create a new one
+			m.messages = append(m.messages, Message{
+				Type:       ToolStartMessage,
+				Name:       msg.Name,
+				CallID:     msg.CallID,
+				ToolStatus: newStatus,
+				Result:     toolResult,
+			})
 			m.markDirty()
 			return m, nil
 		}
 
-		// If no waiting tool message was found, create a new one
-		m.messages = append(m.messages, Message{
-			Type:       ToolStartMessage,
-			Name:       msg.Name,
-			ToolStatus: newStatus,
-			Result:     toolResult,
-		})
+		m.messages[idx].ToolStatus = newStatus
+		m.messages[idx].Result = toolResult
+		m.messages[idx].EndTime = time.Now().Unix()
 		m.markDirty()
 		return m, nil
 
@@ -1042,6 +1029,8 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stopArmed = false
 		m.streamingContent = ""
 		m.errorMsg = errorText
+		// A question asked by a tool that just died must not stay pending.
+		m.clearQuestion()
 		m.markDirty()
 		m.lastRender = time.Time{}
 		return m, nil
@@ -1051,6 +1040,28 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // ---- collapsible block helpers ----
+
+// findWaitingTool returns the index of the running tool call that a result
+// belongs to. The tool call id identifies the call exactly; without it the
+// oldest running call of the same tool is used.
+func (m *ViewModel) findWaitingTool(name, callID string) int {
+	for i := range m.messages {
+		msg := m.messages[i]
+		if msg.Type != ToolStartMessage || msg.ToolStatus != ToolWaiting {
+			continue
+		}
+		if callID != "" {
+			if msg.CallID == callID {
+				return i
+			}
+			continue
+		}
+		if msg.Name == name {
+			return i
+		}
+	}
+	return -1
+}
 
 // collapsibleIndices lists message indices that can be folded (reasoning,
 // tool call and error blocks) in conversation order.
@@ -1205,12 +1216,11 @@ func (m *ViewModel) deleteWord() {
 // never exceed the terminal height.
 func (m *ViewModel) paletteView() []string {
 	hints := m.slashHints()
-	maxLines := m.height - 8 // keep room for header, rule, help, input box
-	if maxLines < 0 {
-		maxLines = 0
-	}
+	maxLines := min(8, maxInt(m.height-7-len(m.todoPanelLines())-len(m.questionPanelLines()), 0))
 	if len(hints) > maxLines {
-		hints = hints[:maxLines]
+		// Follow selection instead of always showing the first candidates.
+		start := maxInt(min(m.paletteSel-maxLines+1, len(hints)-maxLines), 0)
+		hints = hints[start : start+maxLines]
 	}
 	return hints
 }
@@ -1287,9 +1297,13 @@ func (m *ViewModel) updateRenderedLines() {
 	// appendOwned tracks which message produced each line so mouse clicks can
 	// be mapped back to the block that was clicked (owner -1 = not clickable).
 	appendOwned := func(owner int, lines []string) {
-		m.renderedLines = append(m.renderedLines, lines...)
-		for range lines {
-			m.lineOwners = append(m.lineOwners, owner)
+		for _, line := range lines {
+			// Keep physical rows and mouse hit targets in sync, including
+			// multiline user messages and wrapped markdown.
+			for _, row := range strings.Split(line, "\n") {
+				m.renderedLines = append(m.renderedLines, row)
+				m.lineOwners = append(m.lineOwners, owner)
+			}
 		}
 	}
 
@@ -1348,9 +1362,11 @@ func (m *ViewModel) updateRenderedLines() {
 	if len(m.renderedLines) == 0 {
 		appendOwned(-1, []string{
 			"",
-			m.muted().Render("  Welcome to Eino CLI Agent — type a message to get started."),
+			lipgloss.NewStyle().Bold(true).Render("  Welcome to Oni3"),
 			"",
-			m.muted().Render("  Tools, models and agents are configured in config.yml"),
+			m.muted().Render("  描述任务，开始对话。"),
+			"",
+			m.muted().Render("  输入 / 选择模型、技能或恢复会话。"),
 			"",
 		})
 	}
@@ -1372,8 +1388,16 @@ func (m *ViewModel) renderUserMessage(content string) []string {
 		Foreground(lipgloss.Color(m.theme.User)).
 		Bold(true).
 		Render("❯")
-	lines := []string{prompt + " " + content, ""}
-	return wrapLines(lines, m.width)
+	wrapped := ansi.Hardwrap(content, maxInt(m.width-2, 1), true)
+	lines := strings.Split(wrapped, "\n")
+	for i := range lines {
+		if i == 0 {
+			lines[i] = prompt + " " + lines[i]
+		} else {
+			lines[i] = "  " + lines[i]
+		}
+	}
+	return append(lines, "")
 }
 
 // renderAssistantMessage renders a finalized assistant message with cached markdown.
@@ -1400,17 +1424,12 @@ func (m *ViewModel) flushReasoning() {
 	m.reasoningContent = ""
 }
 
-// renderReasoningMessage renders the model's thinking as a dimmed italic
+// renderReasoningMessage renders the model's thinking as a muted
 // block. While streaming the block is expanded; once finalized it collapses
 // to a single summary line until the user expands it.
 func (m *ViewModel) renderReasoningMessage(msg *Message, index int, streaming bool) []string {
-	headStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(m.theme.Muted)).
-		Bold(true).
-		Italic(true)
-	body := lipgloss.NewStyle().
-		Foreground(lipgloss.Color(m.theme.Muted)).
-		Italic(true)
+	headStyle := m.muted()
+	body := m.muted()
 
 	if streaming {
 		head := m.reasoningMarker(true, true) + " " + headStyle.Render("◇ Thinking…")
@@ -1427,15 +1446,12 @@ func (m *ViewModel) renderReasoningMessage(msg *Message, index int, streaming bo
 		// Folded: show a single-line snippet of the reasoning instead of
 		// just a size summary.
 		preview := firstLine(msg.Content)
-		// Room for the snippet on the header row: plain label + " · ", plus
-		// the leading space the selection band adds.
+		// Reserve cells for the label, separator and selection marker.
 		maxW := m.width - lipgloss.Width(plain) - 3
 		if m.selected == index {
-			maxW--
+			maxW -= 2
 		}
-		if maxW < 16 {
-			maxW = 16
-		}
+		maxW = maxInt(maxW, 0)
 		if preview != "" {
 			preview = truncate(preview, maxW)
 			plain += " · " + preview
@@ -1485,25 +1501,12 @@ func foldGlyph(expanded bool) string {
 	return "▸"
 }
 
-// highlightRow renders the selected foldable row as a full-width band, so the
-// Tab selection is visible across the whole line. The band is a low-contrast
-// neutral gray: a saturated theme color here turned the row into a loud bar.
+// highlightRow marks keyboard focus without painting a full-width background.
+// Text inherits the terminal foreground, including on custom light themes.
 func (m *ViewModel) highlightRow(text string) string {
-	// ANSI palette colors instead of hex: they stay subtle on both 256-color
-	// and truecolor terminals and never collapse into a saturated theme hue.
-	bg := "253" // light terminal: soft gray band
-	fg := "236"
-	if m.darkMode {
-		bg = "237"
-		fg = "252"
-	}
-	style := lipgloss.NewStyle().
-		Background(lipgloss.Color(bg)).
-		Foreground(lipgloss.Color(fg))
-	if m.width > 0 {
-		style = style.Width(m.width)
-	}
-	return style.Render(" " + text)
+	marker := m.accentStyle(true).Render("│")
+	row := marker + " " + ansi.Truncate(text, maxInt(m.width-2, 0), "…")
+	return lipgloss.NewStyle().Width(m.width).Render(row)
 }
 
 // renderAssistantContent renders streaming (or generic) markdown content.
@@ -1529,37 +1532,46 @@ func (m *ViewModel) assistantLabel(streaming bool) string {
 // folded to one line; expanding shows the full result.
 func (m *ViewModel) renderToolMessage(msg *Message, index int) []string {
 	var dotColor string
+	glyph := "·"
 	switch msg.ToolStatus {
 	case ToolWaiting:
-		dotColor = m.theme.Warning
+		dotColor, glyph = m.theme.Warning, "◌"
 	case ToolSuccess:
-		dotColor = m.theme.Success
+		dotColor, glyph = m.theme.Success, "✓"
 	case ToolError:
-		dotColor = m.theme.Error
+		dotColor, glyph = m.theme.Error, "✗"
 	}
 
-	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Bold(true).Render("●")
-	name := lipgloss.NewStyle().Bold(true).Render(msg.Name)
+	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(dotColor)).Render(glyph)
+	displayName := toolDisplayName(msg.Name)
+	name := lipgloss.NewStyle().Bold(true).Render(displayName)
 
 	expanded := m.expanded[index]
 	parts := []string{m.reasoningMarker(expanded, false), dot, name}
-	plainParts := []string{foldGlyph(expanded), "●", msg.Name}
+	plainParts := []string{foldGlyph(expanded), glyph, displayName}
 	if args := summarizeArgs(msg.Arguments); args != "" {
 		parts = append(parts, m.muted().Render(args))
 		plainParts = append(plainParts, args)
 	}
-	if msg.ToolStatus == ToolWaiting {
-		parts = append(parts, m.muted().Render("running..."))
-		plainParts = append(plainParts, "running...")
-	} else if msg.EndTime > 0 && msg.StartTime > 0 {
-		duration := fmt.Sprintf("%ds", msg.EndTime-msg.StartTime)
-		parts = append(parts, m.muted().Render(duration))
-		plainParts = append(plainParts, duration)
+	meta := ""
+	metaStyle := m.muted()
+	switch {
+	case msg.ToolStatus == ToolWaiting:
+		meta = "running..."
+	case msg.ToolStatus == ToolError:
+		// A long failure must leave room for the tool name and arguments.
+		reason := oneLine(strings.TrimPrefix(msg.Result, agent.ToolErrorPrefix))
+		reason = strings.TrimPrefix(reason, "error: ")
+		meta = truncate(reason, min(48, maxInt(m.width/3, 1)))
+		metaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Error))
+	case msg.EndTime > 0 && msg.StartTime > 0:
+		meta = fmt.Sprintf("%ds", msg.EndTime-msg.StartTime)
 	}
 
-	head := strings.Join(parts, " ")
+	// Reserve the right edge for progress/duration even with long arguments.
+	head := joinRow(strings.Join(parts, " "), metaStyle.Render(meta), m.width)
 	if m.selected == index {
-		head = m.highlightRow(strings.Join(plainParts, " "))
+		head = m.highlightRow(joinRow(strings.Join(plainParts, " "), meta, m.width-2))
 	}
 	lines := []string{head}
 
@@ -1678,17 +1690,32 @@ func (m *ViewModel) todoPanelLines() []string {
 	width := maxInt(m.width-9, 10)
 	head := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).
 		Render(fmt.Sprintf("☑ 任务 %d/%d", done, len(m.todos)))
+	budget := maxInt(m.height-7-len(m.questionPanelLines()), 0)
+	if budget == 0 {
+		return nil
+	}
 	if m.todosCollapsed {
 		return []string{" " + head + m.muted().Render("  · 已折叠，点击展开")}
 	}
 	lines := []string{" " + head}
-
-	const maxShown = 8
+	// Keep room for the conversation and input; focus the active task when
+	// the entire list cannot fit in a short terminal.
+	maxShown := min(8, maxInt(budget-1, 0))
+	if m.paletteActive() {
+		maxShown = 0 // give command choices priority while completing input
+	}
+	start := 0
 	for i, item := range m.todos {
-		if i >= maxShown {
-			lines = append(lines, m.muted().Render(fmt.Sprintf("   … 还有 %d 项", len(m.todos)-maxShown)))
+		if item.Status == TodoInProgress {
+			start = maxInt(min(i, len(m.todos)-maxShown), 0)
 			break
 		}
+	}
+	end := min(start+maxShown, len(m.todos))
+	if end-start < len(m.todos) {
+		lines[0] += m.muted().Render(fmt.Sprintf("  · 显示 %d/%d 项", end-start, len(m.todos)))
+	}
+	for _, item := range m.todos[start:end] {
 		glyph := "○"
 		style := m.muted()
 		switch item.Status {
@@ -1699,13 +1726,18 @@ func (m *ViewModel) todoPanelLines() []string {
 			glyph = "▸"
 			style = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Warning)).Bold(true)
 		}
-		lines = append(lines, "   "+style.Render(glyph+" "+truncate(item.Content, width)))
+		// A line break inside the task would make the panel taller than the
+		// terminal and break the layout.
+		lines = append(lines, "   "+style.Render(glyph+" "+truncate(oneLine(item.Content), width)))
 	}
 	return lines
 }
 
 // questionPanelLines renders the pending ask_user question and its options.
 func (m *ViewModel) questionPanelLines() []string {
+	if m.provider != nil {
+		return m.providerPanelLines()
+	}
 	q := m.question
 	if q == nil {
 		return nil
@@ -1715,29 +1747,30 @@ func (m *ViewModel) questionPanelLines() []string {
 	if q.approval {
 		title = "⚠ 工具审批："
 	}
-	head := m.warningStyle(true).Render(title + truncate(q.question, width))
+	head := m.warningStyle(true).Render(title + truncate(oneLine(q.question), width))
 	lines := []string{" " + head}
-	if q.detail != "" && q.approval {
-		detail := strings.ReplaceAll(q.detail, "\n", " ")
-		lines = append(lines, m.muted().Render("   "+truncate(detail, width)))
+	if q.detail != "" && q.approval && m.height >= 12 {
+		lines = append(lines, m.muted().Render("   "+truncate(oneLine(q.detail), width)))
 	}
 
 	if len(q.options) > 0 && !q.typing {
-		const maxOptions = 6
+		maxOptions := min(6, maxInt(m.height-8-len(lines), 1))
 		sel := q.sel
 		if sel < 0 || sel >= len(q.options) {
 			sel = 0
 		}
-		for i, opt := range q.options {
-			if i >= maxOptions {
-				lines = append(lines, m.muted().Render(fmt.Sprintf("     … 还有 %d 个选项", len(q.options)-maxOptions)))
-				break
-			}
+		start := maxInt(sel-maxOptions+1, 0)
+		end := min(start+maxOptions, len(q.options))
+		if len(q.options) > maxOptions {
+			lines[0] += m.muted().Render(fmt.Sprintf("  · %d/%d", sel+1, len(q.options)))
+		}
+		for i := start; i < end; i++ {
+			opt := q.options[i]
 			marker := "  "
 			if i == sel {
 				marker = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent)).Bold(true).Render("❯ ")
 			}
-			lines = append(lines, "   "+marker+fmt.Sprintf("%d. %s", i+1, truncate(opt, width)))
+			lines = append(lines, "   "+marker+fmt.Sprintf("%d. %s", i+1, truncate(oneLine(opt), width)))
 		}
 		hint := "   ↑↓ 选择 · enter 确认 · 直接输入自定义回答 · esc 取消"
 		if q.approval {
@@ -1782,7 +1815,10 @@ func (m *ViewModel) View() string {
 	// ---- Header: title left, status right ----
 	statusText := "ready"
 	statusDot := m.theme.Success
-	if m.question != nil {
+	if m.provider != nil {
+		statusText = "provider"
+		statusDot = m.theme.Accent
+	} else if m.question != nil {
 		statusText = "question"
 		statusDot = m.theme.Accent
 		if m.question.approval {
@@ -1796,53 +1832,50 @@ func (m *ViewModel) View() string {
 		statusText = "error"
 		statusDot = m.theme.Error
 	}
-	const titleText = "◆ Eino CLI Agent"
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(statusDot)).Render("●")
-	status := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Muted)).Render(dot + " " + statusText)
-	title := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).Render(titleText)
+	status := dot + m.muted().Render(" "+statusText)
+	title := lipgloss.NewStyle().Bold(true).Render("Oni3")
 	if m.subtitle != "" {
-		// Keep the subtitle (agent · model) on the same row as the status.
-		room := m.width - 2 - lipgloss.Width(titleText) - lipgloss.Width(dot+" "+statusText) - 4
-		title += m.muted().Render(" · " + truncate(m.subtitle, maxInt(room, 8)))
+		title += m.muted().Render("  /  " + oneLine(m.subtitle))
 	}
-	header := joinRow(title, status, m.width-2)
-	rule := m.muted().Render(strings.Repeat("─", maxInt(m.width-2, 3)))
+	header := joinRow(title, status, m.width)
+	rule := m.muted().Render(strings.Repeat("─", maxInt(m.width, 0)))
 
 	// ---- Input area ----
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color(m.theme.Primary)).
+		BorderForeground(lipgloss.Color(m.theme.Muted)).
 		Padding(0, 1).
-		Width(m.width - 4)
+		Width(maxInt(m.width-2, 1))
 
 	var inputLine string
 	if m.confirmQuit {
 		inputLine = m.warningStyle(true).Render("⚠ 再按一次 Ctrl+C 退出（任意其他键取消）")
+	} else if m.provider != nil {
+		inputLine = m.primaryStyle(true).Render("❯") + " " + m.renderEditableInput()
+		if m.provider.stage == providerLoading {
+			inputLine = m.muted().Render("正在获取模型列表… · esc 取消")
+		}
 	} else if m.question != nil {
 		// Answering a question keeps the input editable while the turn waits.
 		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent)).Bold(true).Render("?")
 		inputLine = prompt + " " + m.renderEditableInput()
-		maxCells := m.width - 9
-		if w := lipgloss.Width(inputLine); w > maxCells {
-			inputLine = ansi.TruncateLeft(inputLine, w-maxCells, "…")
-		}
 	} else if m.isWaiting {
 		if m.stopArmed {
 			inputLine = m.warningStyle(true).Render("⚠ 再按一次 Esc 停止当前回复（任意其他键取消）")
 		} else {
-			inputLine = m.muted().Render("⏳ waiting for response... (esc esc to stop · ctrl+c to quit)")
+			inputLine = m.muted().Render("正在处理任务…")
 		}
 	} else {
 		prompt := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).Render("❯")
 		inputLine = prompt + " " + m.renderEditableInput()
-		// Keep the input on one line: overflowing content would wrap inside
-		// the box and push the layout past the terminal height. Show the tail
-		// (near the cursor) when truncated.
-		maxCells := m.width - 9 // border(2) + padding(2) + cursor safety
-		if w := lipgloss.Width(inputLine); w > maxCells {
-			inputLine = ansi.TruncateLeft(inputLine, w-maxCells, "…")
-		}
 	}
+	if m.input == "" && !m.isWaiting && !m.confirmQuit && m.question == nil && m.provider == nil {
+		inputLine = m.primaryStyle(true).Render("❯") + " " + m.renderEditableInput() +
+			m.muted().Render(" 描述任务，或输入 / 选择命令")
+	}
+	// Hints and confirmations must fit just like editable input.
+	inputLine = ansi.Truncate(inputLine, maxInt(m.width-4, 1), "…")
 	inputArea := inputBox.Render(inputLine)
 
 	// ---- Slash command palette (rendered above the input box) ----
@@ -1853,7 +1886,25 @@ func (m *ViewModel) View() string {
 	}
 
 	// ---- Help / status bar ----
-	helpLeft := m.muted().Render("↑↓ scroll · tab select · ctrl+o fold · enter send · /help · ctrl+y mouse/click · ctrl+c quit")
+	helpText := "↑↓ scroll · enter send · / commands"
+	if m.width >= 90 {
+		helpText += " · tab select · ctrl+o fold"
+	}
+	if m.provider != nil {
+		helpText = "↑↓ select · enter confirm · esc cancel"
+		if m.provider.stage == providerKey {
+			helpText = "API Key · enter confirm · esc cancel"
+		}
+	} else if m.question != nil {
+		helpText = "↑↓ select · enter answer · esc cancel"
+	} else if m.hasPalette() {
+		helpText = "↑↓ select · tab complete · enter confirm"
+	} else if m.isWaiting {
+		helpText = "↑↓ scroll · esc esc stop"
+	} else if m.selected >= 0 {
+		helpText = "↑↓ scroll · tab next · ctrl+o fold · /help"
+	}
+	helpLeft := m.muted().Render(helpText)
 
 	scrollInfo := ""
 	if total > viewport {
@@ -1889,34 +1940,66 @@ func (m *ViewModel) View() string {
 			lines[i] = ansi.Truncate(line, m.width, "")
 		}
 	}
+	// The frame must never be taller than the terminal: the renderer drops
+	// the first line of an oversized frame, which hides the header, pushes
+	// the input box off the screen and makes every repaint scroll.
+	if m.height > 0 && len(lines) > m.height {
+		excess := len(lines) - m.height
+		if excess < viewport {
+			lines = append(lines[:2], lines[2+excess:]...)
+		} else {
+			lines = lines[:m.height]
+		}
+	}
 	return strings.Join(lines, "\n")
 }
 
 // renderEditableInput renders the input with a visible cursor position.
 func (m *ViewModel) renderEditableInput() string {
-	runes := []rune(m.input)
-	if m.cursor > len(runes) {
-		m.cursor = len(runes)
+	// Keep the editable cursor visible when moving back through a long
+	// prompt. Newlines remain in the submitted text, but occupy one cell here.
+	value, position := m.input, m.cursor
+	if m.provider != nil && m.provider.stage == providerKey {
+		value = strings.Repeat("•", len(m.provider.key))
+		position = m.provider.keyCursor
 	}
-	left := string(runes[:m.cursor])
-	var right string
-	if m.cursor < len(runes) {
-		cursorChar := lipgloss.NewStyle().Reverse(true).Render(string(runes[m.cursor]))
-		right = cursorChar + string(runes[m.cursor+1:])
-	} else {
-		right = lipgloss.NewStyle().Reverse(true).Render(" ")
+	runes := []rune(strings.NewReplacer("\n", "↵", "\r", " ", "\t", " ").Replace(value))
+	cursor := min(maxInt(position, 0), len(runes))
+	left := string(runes[:cursor])
+	char, right := " ", ""
+	if cursor < len(runes) {
+		char = string(runes[cursor])
+		right = string(runes[cursor+1:])
 	}
-	return left + right
+	width := maxInt(m.width-6, 1) // border, padding and prompt
+	leftRoom := maxInt(width-lipgloss.Width(char)-min(lipgloss.Width(right), width/3), 0)
+	if w := lipgloss.Width(left); w > leftRoom {
+		if leftRoom > 0 {
+			left = "…" + ansi.Cut(left, w-leftRoom+1, w)
+		} else {
+			left = ""
+		}
+	}
+	rightRoom := maxInt(width-lipgloss.Width(left)-lipgloss.Width(char), 0)
+	return left + lipgloss.NewStyle().Reverse(true).Render(char) + ansi.Truncate(right, rightRoom, "…")
 }
 
 // joinRow places left and right text on one row with space between.
 func joinRow(left, right string, width int) string {
-	leftLen := lipgloss.Width(left)
-	rightLen := lipgloss.Width(right)
-	gap := width - leftLen - rightLen
-	if gap < 1 {
-		gap = 1
+	if width <= 0 {
+		return ""
 	}
+	right = ansi.Truncate(right, width, "…")
+	rightLen := lipgloss.Width(right)
+	if rightLen >= width {
+		return right
+	}
+	room := width - rightLen
+	if rightLen > 0 {
+		room-- // leave a gap before status / scroll position
+	}
+	left = ansi.Truncate(left, room, "…")
+	gap := width - lipgloss.Width(left) - rightLen
 	return left + strings.Repeat(" ", gap) + right
 }
 
@@ -1987,7 +2070,8 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// summarizeArgs condenses tool arguments into a short preview.
+// summarizeArgs condenses tool arguments into a short preview. The preview
+// stays on one line: a newline in the arguments broke the tool row apart.
 func summarizeArgs(args string) string {
 	args = strings.TrimSpace(args)
 	if args == "" || args == "{}" {
@@ -1996,16 +2080,65 @@ func summarizeArgs(args string) string {
 	if strings.HasPrefix(args, "{") && strings.HasSuffix(args, "}") {
 		var parsed map[string]interface{}
 		if err := json.Unmarshal([]byte(args), &parsed); err == nil {
+			keys := make([]string, 0, len(parsed))
+			for k := range parsed {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
 			var parts []string
-			for k, v := range parsed {
-				parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+			for _, k := range keys {
+				parts = append(parts, fmt.Sprintf("%s=%s", k, summarizeValue(parsed[k])))
 			}
 			if len(parts) > 0 {
 				return truncate(strings.Join(parts, " "), 60)
 			}
 		}
 	}
-	return truncate(args, 60)
+	return truncate(oneLine(args), 60)
+}
+
+// summarizeValue renders one argument value compactly. Nested structures are
+// reduced to their most descriptive part instead of a Go map dump.
+func summarizeValue(value interface{}) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return truncate(oneLine(v), 40)
+	case bool:
+		return strconv.FormatBool(v)
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case []interface{}:
+		if len(v) == 0 {
+			return "[]"
+		}
+		if len(v) == 1 {
+			return summarizeValue(v[0])
+		}
+		return fmt.Sprintf("%d 项", len(v))
+	case map[string]interface{}:
+		// Prefer a field that carries the meaning of the object.
+		for _, key := range []string{"content", "title", "name", "text", "path", "url", "query", "command", "description"} {
+			if s, ok := v[key]; ok {
+				if str, ok := s.(string); ok && strings.TrimSpace(str) != "" {
+					return truncate(oneLine(str), 40)
+				}
+			}
+		}
+		return fmt.Sprintf("%d 个字段", len(v))
+	default:
+		return truncate(oneLine(fmt.Sprintf("%v", v)), 40)
+	}
+}
+
+// oneLine collapses a text into a single line.
+func oneLine(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", " ")
+	text = strings.ReplaceAll(text, "\n", " ")
+	text = strings.ReplaceAll(text, "\t", " ")
+	text = strings.Join(strings.Fields(text), " ")
+	return text
 }
 
 // renderMarkdown renders markdown content, falling back to plain text.

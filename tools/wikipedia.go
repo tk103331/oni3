@@ -6,7 +6,7 @@ import (
 
 	"github.com/cloudwego/eino-ext/components/tool/wikipedia"
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // NewWikipediaTool creates Wikipedia tool
@@ -15,6 +15,8 @@ func NewWikipediaTool(name string, cfg config.Tool) (tool.InvokableTool, error) 
 
 	// Create default configuration
 	wikiConfig := &wikipedia.Config{
+		ToolName:    name,
+		ToolDesc:    cfg.Description,
 		Language:    "zh",             // Default Chinese
 		TopK:        5,                // Default return 5 results
 		DocMaxChars: 500,              // Default summary max length
@@ -26,8 +28,8 @@ func NewWikipediaTool(name string, cfg config.Tool) (tool.InvokableTool, error) 
 	if language, exists := cfg.Config["language"]; exists {
 		wikiConfig.Language = language.String()
 	}
-	if topK, exists := cfg.Config["top_k"]; exists {
-		if val := topK.Int(); val > 0 {
+	if maxResults, exists := cfg.Config["max_results"]; exists {
+		if val := maxResults.Int(); val > 0 {
 			wikiConfig.TopK = val
 		}
 	}
@@ -47,8 +49,8 @@ func NewWikipediaTool(name string, cfg config.Tool) (tool.InvokableTool, error) 
 	if userAgent, exists := cfg.Config["user_agent"]; exists {
 		wikiConfig.UserAgent = userAgent.String()
 	}
-	if maxRedirect, exists := cfg.Config["max_redirect"]; exists {
-		if val := maxRedirect.Int(); val > 0 {
+	if maxRedirects, exists := cfg.Config["max_redirects"]; exists {
+		if val := maxRedirects.Int(); val > 0 {
 			wikiConfig.MaxRedirect = val
 		}
 	}

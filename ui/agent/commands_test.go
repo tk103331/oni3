@@ -12,7 +12,7 @@ func TestSlashPalette(t *testing.T) {
 	m = drive(m, tea.WindowSizeMsg{Width: 110, Height: 30})
 	m.SetSlashCommands([]SlashCommand{
 		{Name: "model", Args: "<name>", Description: "切换模型", Values: []string{"gpt4", "ds41"}},
-		{Name: "skill", Args: "<name>", Description: "启用 skill", Values: []string{"off", "translator"}},
+		{Name: "skill", Args: "<name>", Description: "选择 skill", Values: []string{"off", "translator"}},
 	}, nil)
 
 	// Typing "/" lists builtin and host commands
@@ -71,6 +71,36 @@ func TestSlashExecution(t *testing.T) {
 	}
 	if len(m.messages) == 0 || m.messages[len(m.messages)-1].Type != InfoMessage {
 		t.Fatalf("command output should be an InfoMessage")
+	}
+}
+
+func TestSlashReturnsAsyncCommandAndOptionalProviderOpensPicker(t *testing.T) {
+	m := NewViewModel(nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	called := false
+	m.SetSlashCommands([]SlashCommand{{Name: "provider", Args: "[name]", Description: "Choose provider", Values: []string{"cloud"}}}, func(input string) CommandResult {
+		if input != "provider" {
+			t.Fatalf("command: %q", input)
+		}
+		return CommandResult{Cmd: func() tea.Msg { called = true; return "loaded" }}
+	})
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/provider")})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if called {
+		t.Fatal("async command ran on the update goroutine")
+	}
+	if cmd == nil {
+		t.Fatal("command was dropped")
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, next := range batch {
+			if next != nil {
+				next()
+			}
+		}
+	}
+	if !called {
+		t.Fatal("async command never ran")
 	}
 }
 
@@ -198,7 +228,7 @@ func TestPaletteEnterSubLevelAndBottomInput(t *testing.T) {
 	}
 
 	// The help bar is the bottom-most element, directly below the input box.
-	helpIdx := strings.LastIndex(out, "↑↓ scroll")
+	helpIdx := strings.LastIndex(out, "↑↓ select")
 	inputIdx := strings.LastIndex(out, "╭")
 	if helpIdx < 0 || inputIdx < 0 || helpIdx < inputIdx {
 		t.Fatalf("help bar should be below the input box (input=%d help=%d)", inputIdx, helpIdx)

@@ -7,23 +7,25 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/mark3labs/mcp-go/client"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // Client MCP client structure
 type Client struct {
-	mu      sync.RWMutex
-	clients map[string]*client.Client
-	tools   map[string]tool.InvokableTool
-	config  *config.Config
+	mu          sync.RWMutex
+	clients     map[string]*client.Client
+	tools       map[string]tool.InvokableTool
+	toolServers map[string]string // canonical tool key -> exact owning server
+	config      *config.Config
 }
 
 // NewClient creates a new MCP client
 func NewClient(cfg *config.Config) *Client {
 	return &Client{
-		clients: make(map[string]*client.Client),
-		tools:   make(map[string]tool.InvokableTool),
-		config:  cfg,
+		clients:     make(map[string]*client.Client),
+		tools:       make(map[string]tool.InvokableTool),
+		toolServers: make(map[string]string),
+		config:      cfg,
 	}
 }
 
@@ -72,13 +74,14 @@ func (c *Client) GetToolsForServers(serverNames []string) map[string]tool.Invoka
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	tools := make(map[string]tool.InvokableTool)
+	requested := make(map[string]bool, len(serverNames))
 	for _, serverName := range serverNames {
-		for toolName, tool := range c.tools {
-			// Tool name format: serverName_toolName
-			if len(toolName) > len(serverName)+1 && toolName[:len(serverName)+1] == serverName+"_" {
-				tools[toolName] = tool
-			}
+		requested[serverName] = true
+	}
+	tools := make(map[string]tool.InvokableTool)
+	for name, t := range c.tools {
+		if owner, ok := c.toolServers[name]; ok && requested[owner] {
+			tools[name] = t
 		}
 	}
 	return tools

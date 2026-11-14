@@ -5,12 +5,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tk103331/eino-cli/agent"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/logger"
-	"github.com/tk103331/eino-cli/session"
-	"github.com/tk103331/eino-cli/state"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/agent"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/session"
+	"github.com/tk103331/oni3/state"
+	"github.com/tk103331/oni3/tools"
 )
 
 // sortedKeys returns the sorted keys of a string-keyed map.
@@ -66,7 +66,7 @@ func (app *AgentApp) effectiveAgentConfig() (config.Agent, bool) {
 	}
 	// Interactive sessions always expose the ask/task tools; the TUI
 	// implements their host side.
-	ac.Tools = appendUnique(ac.Tools, tools.AskUserToolName, tools.TodoToolName)
+	ac.Tools = appendUnique(ac.Tools, tools.AskUserToolName, tools.TodoListToolName)
 	return ac, true
 }
 
@@ -118,6 +118,25 @@ func (app *AgentApp) rebuildAgent() error {
 	return nil
 }
 
+// selectModel commits the override only when the replacement agent initializes.
+func (app *AgentApp) selectModel(name string) CommandResult {
+	cfg := config.GetConfig()
+	previous := app.modelOverride
+	app.modelOverride = name
+	if err := app.rebuildAgent(); err != nil {
+		app.modelOverride = previous
+		return CommandResult{Message: fmt.Sprintf("切换模型失败: %v", err), Error: true}
+	}
+	rememberModel(cfg, app.agentName, name)
+	app.syncSessionConfig()
+	app.registerCommands()
+	msg := "已切换模型: " + name
+	if cfg.AgentUsesDefaultModel(app.agentName) {
+		msg += "（已记住，下次启动沿用）"
+	}
+	return CommandResult{Message: msg, Subtitle: app.headerSubtitle()}
+}
+
 func (app *AgentApp) currentModelName() string {
 	if app.modelOverride != "" {
 		return app.modelOverride
@@ -150,7 +169,8 @@ func (app *AgentApp) slashCommands() []SlashCommand {
 	return []SlashCommand{
 		{Name: "agent", Args: "<name>", Description: fmt.Sprintf("切换 agent（当前: %s）", app.agentName), Values: sortedKeys(cfg.Agents)},
 		{Name: "model", Args: "<name>", Description: fmt.Sprintf("切换模型（当前: %s）", app.currentModelName()), Values: sortedKeys(cfg.Models)},
-		{Name: "skill", Args: "<name>", Description: fmt.Sprintf("启用 skill（当前: %s）", app.skillName()), Values: skillValues},
+		{Name: "provider", Args: "[name]", Description: "选择 provider 并添加模型", Values: sortedKeys(cfg.Providers)},
+		{Name: "skill", Args: "<name>", Description: fmt.Sprintf("选择 skill（当前: %s）", app.skillName()), Values: skillValues},
 		{Name: "theme", Args: "<name> [light|dark]", Description: fmt.Sprintf("切换颜色主题（当前: %s/%s）", app.model.ThemeName(), themeModeName(app.model.DarkMode())), Values: themeNames()},
 		{Name: "tools", Description: "列出当前可用工具"},
 		{Name: "status", Description: "显示当前会话状态"},
@@ -162,7 +182,7 @@ func (app *AgentApp) slashCommands() []SlashCommand {
 func (app *AgentApp) executeSlash(input string) CommandResult {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
-		return CommandResult{Message: "用法：/agent、/model、/skill、/resume、/tools、/status", Error: true}
+		return CommandResult{Message: "用法：/agent、/model、/provider、/skill、/resume、/tools、/status", Error: true}
 	}
 	name := strings.ToLower(fields[0])
 	arg := ""
@@ -199,43 +219,35 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 		if _, ok := cfg.Models[arg]; !ok {
 			return CommandResult{Message: fmt.Sprintf("模型不存在: %s\n可用模型：%s", arg, strings.Join(sortedKeys(cfg.Models), ", ")), Error: true}
 		}
-		app.modelOverride = arg
-		if err := app.rebuildAgent(); err != nil {
-			return CommandResult{Message: fmt.Sprintf("切换模型失败: %v", err), Error: true}
-		}
-		rememberModel(cfg, app.agentName, arg)
-		app.syncSessionConfig()
-		app.registerCommands()
-		msg := "已切换模型: " + arg
-		if cfg.AgentUsesDefaultModel(app.agentName) {
-			msg += "（已记住，下次启动沿用）"
-		}
-		return CommandResult{Message: msg, Subtitle: app.headerSubtitle()}
+		return app.selectModel(arg)
+
+	case "provider":
+		return app.model.openProvider(cfg, app.ctx, arg, app.addProviderModels)
 
 	case "skill":
 		if arg == "" {
-			return CommandResult{Message: "用法：/skill <name>（用 /skill off 关闭）\n可用 skill：" + strings.Join(append([]string{"off"}, sortedKeys(cfg.Skills)...), ", ") +
+			return CommandResult{Message: "用法：/skill <name>（用 /skill off 取消选择）\n可用 skill：" + strings.Join(append([]string{"off"}, sortedKeys(cfg.Skills)...), ", ") +
 				"\n目录：" + strings.Join(config.SkillDirectories(), ", "), Error: true}
 		}
 		if arg == "off" || arg == "none" {
 			app.skill = ""
 			if err := app.rebuildAgent(); err != nil {
-				return CommandResult{Message: fmt.Sprintf("关闭 skill 失败: %v", err), Error: true}
+				return CommandResult{Message: fmt.Sprintf("取消 skill 选择失败: %v", err), Error: true}
 			}
 			app.syncSessionConfig()
 			app.registerCommands()
-			return CommandResult{Message: "已关闭 skill"}
+			return CommandResult{Message: "已取消 skill 选择"}
 		}
 		if _, ok := cfg.Skills[arg]; !ok {
 			return CommandResult{Message: fmt.Sprintf("skill 不存在: %s\n可用 skill：%s", arg, strings.Join(sortedKeys(cfg.Skills), ", ")), Error: true}
 		}
 		app.skill = arg
 		if err := app.rebuildAgent(); err != nil {
-			return CommandResult{Message: fmt.Sprintf("启用 skill 失败: %v", err), Error: true}
+			return CommandResult{Message: fmt.Sprintf("选择 skill 失败: %v", err), Error: true}
 		}
 		app.syncSessionConfig()
 		app.registerCommands()
-		return CommandResult{Message: "已启用 skill: " + arg}
+		return CommandResult{Message: "已选择 skill: " + arg}
 
 	case "theme":
 		if arg == "" {
@@ -262,7 +274,7 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 			b.WriteString("（无）")
 		} else {
 			for _, t := range ac.Tools {
-				b.WriteString("\n  · " + t)
+				b.WriteString("\n  · " + toolDisplayName(t))
 			}
 		}
 		if len(ac.MCPServers) > 0 {

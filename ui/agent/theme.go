@@ -2,21 +2,16 @@ package agent
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/plugins"
 )
 
 // ThemeVariant is a set of interface colors tuned for one background mode.
-type ThemeVariant struct {
-	Primary string // brand / title / input border
-	Accent  string // assistant label / selection cursor / palette
-	Success string // ready status / successful tools
-	Warning string // running tools / spinner
-	Error   string // errors / failed tools
-	User    string // user prompt marker
-	Muted   string // secondary text, reasoning body
-}
+type ThemeVariant = plugins.ThemeVariant
 
 // Theme is a named color scheme with light and dark variants.
 type Theme struct {
@@ -131,6 +126,14 @@ func themeNames() []string {
 	for _, t := range themeRegistry {
 		names = append(names, t.Name)
 	}
+	if cfg := config.GetConfig(); cfg != nil {
+		var extra []string
+		for name := range cfg.PluginThemes {
+			extra = append(extra, name)
+		}
+		sort.Strings(extra)
+		names = append(names, extra...)
+	}
 	return names
 }
 
@@ -139,6 +142,13 @@ func lookupTheme(name string) (Theme, bool) {
 	for _, t := range themeRegistry {
 		if strings.EqualFold(t.Name, name) {
 			return t, true
+		}
+	}
+	if cfg := config.GetConfig(); cfg != nil {
+		for key, theme := range cfg.PluginThemes {
+			if strings.EqualFold(key, name) {
+				return Theme{Name: key, Description: theme.Description, Light: theme.Light, Dark: theme.Dark}, true
+			}
 		}
 	}
 	return Theme{}, false

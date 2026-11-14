@@ -10,27 +10,27 @@ import (
 	"github.com/cloudwego/eino/callbacks"
 	acpsdk "github.com/coder/acp-go-sdk"
 	"github.com/spf13/cobra"
-	"github.com/tk103331/eino-cli/acp"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/logger"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/acp"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/tools"
 )
 
 var acpCmd = &cobra.Command{
 	Use:   "acp",
-	Short: "Run Eino CLI as an Agent Client Protocol (ACP) agent over stdio",
-	Long: `Run Eino CLI as an Agent Client Protocol (ACP) agent.
+	Short: "Run Oni3 as an Agent Client Protocol (ACP) agent over stdio",
+	Long: `Run Oni3 as an Agent Client Protocol (ACP) agent.
 
-ACP (https://agentclientprotocol.com) lets editors such as Zed drive Eino CLI
+ACP (https://agentclientprotocol.com) lets editors such as Zed drive Oni3
 through a standardized JSON-RPC 2.0 protocol over stdio. The configured agent,
 including its tools and MCP servers, is exposed to the client as ACP sessions.
 
-Without --agent the built-in Eino agent is served.`,
+Without --agent the built-in OniThree agent is served.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.GetConfig()
 
 		if cfg.Settings.Langfuse != nil {
-			handler, flusher := langfuse.NewLangfuseHandler(cfg.Settings.Langfuse)
+			handler, flusher := langfuse.NewLangfuseHandler(cfg.Settings.Langfuse.SDKConfig())
 			defer flusher()
 			callbacks.AppendGlobalHandlers(handler)
 		}
@@ -38,7 +38,7 @@ Without --agent the built-in Eino agent is served.`,
 		agentName, _ := cmd.Flags().GetString("agent")
 
 		if agentName == "" {
-			// Without --agent, serve the built-in Eino agent so `eino acp`
+			// Without --agent, serve the built-in OniThree agent so `oni3 acp`
 			// works as soon as a model is configured.
 			name, err := ensureBuiltinAgent(cfg)
 			if err != nil {
@@ -47,7 +47,7 @@ Without --agent the built-in Eino agent is served.`,
 			agentName = name
 			// Interactive-only tools have no ACP counterpart (there is no way
 			// to ask the user), so the built-in agent does without them here.
-			dropAgentTools(cfg, agentName, tools.AskUserToolName, tools.TodoToolName)
+			dropAgentTools(cfg, agentName, tools.AskUserToolName, tools.TodoListToolName)
 		}
 
 		if _, ok := cfg.Agents[agentName]; !ok {
@@ -80,5 +80,5 @@ Without --agent the built-in Eino agent is served.`,
 
 func init() {
 	RootCmd.AddCommand(acpCmd)
-	acpCmd.Flags().StringP("agent", "a", "", "Specify the Agent name to expose over ACP (default: the built-in Eino agent)")
+	acpCmd.Flags().StringP("agent", "a", "", "Specify the Agent name to expose over ACP (default: the built-in OniThree agent)")
 }

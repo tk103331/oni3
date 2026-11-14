@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 	"gopkg.in/yaml.v3"
 )
 
@@ -57,15 +57,79 @@ func TestSubagentCreatesTemporaryAgent(t *testing.T) {
 	})
 
 	tl := newSubagentTestTool(t, "type: subagent\n")
-	out := runFS(t, tl, `{"system":"You are a reviewer.","model":"ds","tools":["filesystem","filesystem"," filesystem "],"prompt":"review"}`)
+	out := runFS(t, tl, `{"system":"You are a reviewer.","model":"ds","tools":["file_system","file_system"," file_system "],"prompt":"review"}`)
 	if out != "ok" {
 		t.Fatalf("output = %q", out)
 	}
 	if got.System != "You are a reviewer." || got.Model != "ds" || got.Prompt != "review" {
 		t.Fatalf("spec = %+v", got)
 	}
-	if len(got.Tools) != 1 || got.Tools[0] != "filesystem" {
+	if len(got.Tools) != 1 || got.Tools[0] != "file_system" {
 		t.Fatalf("tools should be trimmed and deduped: %v", got.Tools)
+	}
+}
+
+// A bare prompt is the common call shape: the child is a temporary agent that
+// inherits the parent's model and tools.
+func TestSubagentAcceptsPromptOnly(t *testing.T) {
+	var got SubagentSpec
+	useFakeSubagentRunner(t, func(ctx context.Context, spec SubagentSpec) (string, error) {
+		got = spec
+		return "ok", nil
+	})
+	tl := newSubagentTestTool(t, "type: subagent\n")
+
+	ctx := WithActiveModel(context.Background(), "parent-model")
+	ctx = WithActiveTools(ctx, []string{"file_system", "command_line"})
+	out, err := tl.InvokableRun(ctx, `{"prompt":"只回复一句话：hello"}`)
+	if err != nil {
+		t.Fatalf("unexpected tool error: %v", err)
+	}
+	if out != "ok" {
+		t.Fatalf("output = %q", out)
+	}
+	if got.Agent != "" {
+		t.Fatalf("a bare prompt must not pick a configured agent: %+v", got)
+	}
+	if got.System == "" {
+		t.Fatal("the temporary agent needs a system prompt")
+	}
+	if got.Model != "parent-model" {
+		t.Fatalf("model = %q, want the parent's", got.Model)
+	}
+	if len(got.Tools) != 2 || got.Tools[0] != "file_system" || got.Tools[1] != "command_line" {
+		t.Fatalf("tools = %v, want the parent's tools", got.Tools)
+	}
+
+	// An explicit system prompt still replaces the default.
+	if _, err := tl.InvokableRun(ctx, `{"system":"You are a reviewer.","prompt":"x"}`); err != nil {
+		t.Fatalf("unexpected tool error: %v", err)
+	}
+	if got.System != "You are a reviewer." {
+		t.Fatalf("system = %q", got.System)
+	}
+}
+
+// Inherited tools are filtered by the allowlist instead of failing the call.
+func TestSubagentInheritedToolsRespectAllowlist(t *testing.T) {
+	var got SubagentSpec
+	useFakeSubagentRunner(t, func(ctx context.Context, spec SubagentSpec) (string, error) {
+		got = spec
+		return "ok", nil
+	})
+	tl := newSubagentTestTool(t, "type: subagent\nconfig:\n  tools: [file_system]\n")
+
+	ctx := WithActiveTools(context.Background(), []string{"file_system", "command_line"})
+	if _, err := tl.InvokableRun(ctx, `{"prompt":"x"}`); err != nil {
+		t.Fatalf("unexpected tool error: %v", err)
+	}
+	if len(got.Tools) != 1 || got.Tools[0] != "file_system" {
+		t.Fatalf("tools = %v, want only the allowed one", got.Tools)
+	}
+
+	// An explicit request for a disallowed tool is still an error.
+	if out, _ := tl.InvokableRun(ctx, `{"tools":["command_line"],"prompt":"x"}`); !strings.Contains(out, "not allowed") {
+		t.Fatalf("explicit disallowed tool = %q", out)
 	}
 }
 
@@ -77,9 +141,9 @@ func TestSubagentArgumentValidation(t *testing.T) {
 	tl := newSubagentTestTool(t, "type: subagent\n")
 
 	cases := map[string]string{
-		`{"prompt":"x"}`: "either agent",
 		`{"agent":"a","system":"s","prompt":"x"}`: "not both",
 		`{"agent":"a"}`: "prompt is required",
+		`{}`:            "prompt is required",
 	}
 	for args, want := range cases {
 		out := runFS(t, tl, args)
@@ -94,14 +158,14 @@ func TestSubagentAllowlists(t *testing.T) {
 		return "ok", nil
 	})
 
-	tl := newSubagentTestTool(t, "type: subagent\nconfig:\n  agents: [worker]\n  tools: [filesystem]\n")
+	tl := newSubagentTestTool(t, "type: subagent\nconfig:\n  agents: [worker]\n  tools: [file_system]\n")
 	if out := runFS(t, tl, `{"agent":"other","prompt":"x"}`); !strings.Contains(out, "not allowed") {
 		t.Fatalf("agent allowlist = %q", out)
 	}
 	if out := runFS(t, tl, `{"agent":"worker","prompt":"x"}`); out != "ok" {
 		t.Fatalf("allowed agent = %q", out)
 	}
-	if out := runFS(t, tl, `{"system":"s","tools":["commandline"],"prompt":"x"}`); !strings.Contains(out, "not allowed for temporary agents") {
+	if out := runFS(t, tl, `{"system":"s","tools":["command_line"],"prompt":"x"}`); !strings.Contains(out, "not allowed for temporary agents") {
 		t.Fatalf("tool allowlist = %q", out)
 	}
 

@@ -10,17 +10,17 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
-// SubagentToolName is the default name of the subagent tool.
-const SubagentToolName = "subagent"
+// defaultSubagentSystem instructs a child agent created from a bare prompt.
+const defaultSubagentSystem = "You are a focused subagent. Complete the task you are given " +
+	"and reply with the result only. Do not ask questions; if the task cannot be completed, " +
+	"state the concrete blocker."
 
-// SubagentToolType is the config type of the subagent tool.
-const SubagentToolType = "subagent"
-
-// SubagentSpec describes a child-agent run requested by the model. Either
-// Agent (a configured agent) or System (an ad-hoc agent) is set.
+// SubagentSpec describes a child-agent run requested by the model. Agent names
+// a configured agent; otherwise System describes a temporary one (it falls back
+// to a default instruction when the call only carried a prompt).
 type SubagentSpec struct {
 	Agent  string
 	System string
@@ -69,6 +69,23 @@ func WithActiveModel(ctx context.Context, model string) context.Context {
 func ActiveModel(ctx context.Context) string {
 	model, _ := ctx.Value(activeModelKey{}).(string)
 	return model
+}
+
+type activeToolsKey struct{}
+
+// WithActiveTools records the tool names the current run has, so a subagent
+// asked for nothing but a prompt inherits the same capabilities.
+func WithActiveTools(ctx context.Context, names []string) context.Context {
+	if len(names) == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, activeToolsKey{}, append([]string(nil), names...))
+}
+
+// ActiveTools returns the tool names recorded by WithActiveTools.
+func ActiveTools(ctx context.Context) []string {
+	names, _ := ctx.Value(activeToolsKey{}).([]string)
+	return names
 }
 
 // subagentTool delegates a self-contained task to another agent.
@@ -125,8 +142,10 @@ func NewSubagentTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
 	desc := cfg.Description
 	if desc == "" {
 		desc = "Run a child agent to complete a self-contained task and return its final answer. " +
+			"Only `prompt` is required: without `agent` or `system` the child is a temporary agent " +
+			"that inherits the current model and tools. " +
 			"Pass `agent` to run an agent from the configuration, or `system` (with optional `model` and `tools`) " +
-			"to create a temporary agent for this call. The child has its own conversation and does not see the current chat."
+			"to give the temporary agent its own instructions. The child has its own conversation and does not see the current chat."
 	}
 
 	t.info = &schema.ToolInfo{
@@ -187,9 +206,6 @@ func (t *subagentTool) InvokableRun(ctx context.Context, argumentsInJSON string,
 	if agentName != "" && system != "" {
 		return t.fail("pass either agent or system, not both")
 	}
-	if agentName == "" && system == "" {
-		return t.fail("either agent (a configured agent) or system (a temporary agent) is required")
-	}
 
 	if agentName != "" {
 		if t.agents != nil && !t.agents[agentName] {
@@ -197,15 +213,33 @@ func (t *subagentTool) InvokableRun(ctx context.Context, argumentsInJSON string,
 		}
 	} else {
 		if !t.allowNew {
-			return t.fail("temporary agents are disabled by this tool's configuration")
+			return t.fail("temporary agents are disabled; pass `agent` to name a configured agent")
+		}
+		// A bare prompt is the common case: the child is a temporary agent
+		// that inherits the current model and tools. It used to be rejected,
+		// which made the tool unusable for models that omit the optional
+		// fields.
+		inherited := false
+		if system == "" {
+			system = defaultSubagentSystem
+		}
+		if len(cleanToolNames(in.Tools)) == 0 {
+			in.Tools = ActiveTools(ctx)
+			inherited = true
 		}
 		toolNames := cleanToolNames(in.Tools)
 		if t.tools != nil {
+			kept := make([]string, 0, len(toolNames))
 			for _, toolName := range toolNames {
-				if !t.tools[toolName] {
+				if t.tools[toolName] {
+					kept = append(kept, toolName)
+					continue
+				}
+				if !inherited {
 					return t.fail("tool %q is not allowed for temporary agents", toolName)
 				}
 			}
+			toolNames = kept
 		}
 		in.Tools = toolNames
 	}

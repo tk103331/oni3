@@ -6,15 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/tk103331/oni3/internal/datadir"
 )
 
-// Dir returns the eino-cli state directory (~/.eino-cli).
+// Dir returns the user data directory (~/.oni3).
 func Dir() string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
-	}
-	return filepath.Join(home, ".eino-cli")
+	return datadir.Dir()
 }
 
 // lastAgentPath returns the file storing the last used agent name.

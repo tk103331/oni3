@@ -1,58 +1,42 @@
 version: 2
 
-project_name: eino-cli
+project_name: oni3
 
 before:
   hooks:
     - go mod tidy
 
 builds:
-  # Short alias binary: eino
-  - id: eino
-    main: ./cmd/eino
-    binary: eino
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - darwin
-      - linux
-    goarch:
-      - amd64
-      - arm64
-    flags:
-      - -trimpath
-    ldflags:
-      - -s -w -X github.com/tk103331/eino-cli/version.Version={{ .Version }}
-
-  # Primary binary: eino-cli
-  - id: eino-cli
+  # The only binary: oni3
+  - id: oni3
     main: .
-    binary: eino-cli
+    binary: oni3
     env:
       - CGO_ENABLED=0
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/tk103331/eino-cli/version.Version={{ .Version }}
+      - -s -w -X github.com/tk103331/oni3/version.Version={{ .Version }}
 
 # Ship compressed archives: a stripped binary is ~50 MB, while gzip brings the
 # download down to ~15 MB. The npm installer and the Homebrew formula unpack
-# `eino` from eino_<version>_<os>_<arch>.tar.gz.
+# `oni3` from oni3_<version>_<os>_<arch>.tar.gz. Windows gets a zip, which is
+# what its tooling expects.
 archives:
-  - id: eino
-    ids: [eino]
+  - id: oni3
+    ids: [oni3]
     formats: [tar.gz]
     name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
-  - id: eino-cli
-    ids: [eino-cli]
-    formats: [tar.gz]
-    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
 
 checksum:
   name_template: checksums.txt
@@ -60,6 +44,6 @@ checksum:
 release:
   github:
     owner: tk103331
-    name: eino-cli
+    name: oni3
   draft: false
   prerelease: auto

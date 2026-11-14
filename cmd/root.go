@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/mcp"
-	"github.com/tk103331/eino-cli/version"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/internal/datadir"
+	"github.com/tk103331/oni3/mcp"
+	"github.com/tk103331/oni3/version"
 )
 
 var (
@@ -20,16 +21,16 @@ var (
 
 // RootCmd represents the base command when called without any subcommands
 var RootCmd = &cobra.Command{
-	Use:   "eino-cli [directory]",
-	Short: "Eino CLI tool",
-	Long: `A command line interface for Eino.
+	Use:   "oni3 [directory]",
+	Short: "Oni3 — AI agent CLI",
+	Long: `Oni3 is a command line interface for AI agents.
 
 Optionally pass a working directory; tools resolve relative paths against it.
 The same directory can be given with --cwd/-C.`,
 	Version: version.Version,
 	Args:    cobra.MaximumNArgs(1),
 	// Running without a subcommand opens the interactive agent: the last used
-	// agent when available, otherwise the built-in Eino agent.
+	// agent when available, otherwise the built-in OniThree agent.
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.GetConfig()
 		name, err := resolveDefaultAgent(cfg)
@@ -93,7 +94,7 @@ func Execute() {
 }
 
 // workDirFromArgs merges the --cwd flag with the optional positional
-// directory (`eino-cli [directory]`). Specifying both is an error.
+// directory (`oni3 [directory]`). Specifying both is an error.
 func workDirFromArgs(args []string, flagDir string) (string, error) {
 	flagDir = strings.TrimSpace(flagDir)
 	if len(args) > 1 {
@@ -129,14 +130,12 @@ func enterWorkDir(dir string) error {
 }
 
 func init() {
-	// Get user home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		homeDir = "."
-	}
-	defaultConfigPath := filepath.Join(homeDir, ".eino-cli", "config.yml")
-
 	// Add global parameters
+	defaultConfigPath := ""
+	if dir := datadir.Dir(); dir != "" {
+		defaultConfigPath = filepath.Join(dir, "config.yml")
+	}
+
 	RootCmd.PersistentFlags().StringVar(&configPath, "config", defaultConfigPath, "Configuration file path")
 	RootCmd.PersistentFlags().StringVarP(&workDir, "cwd", "C", "", "Run in this working directory (default: the current one)")
 }

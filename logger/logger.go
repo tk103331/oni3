@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/tk103331/oni3/internal/datadir"
 )
 
 // LogLevel represents the severity of log messages
@@ -27,20 +29,17 @@ var logger *Logger
 
 // Init initializes the logger with log file in user directory
 func Init() error {
-	// Get user home directory
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get user home directory: %v", err)
+	// Create the user data directory if it doesn't exist
+	logDir := datadir.Dir()
+	if logDir == "" {
+		return fmt.Errorf("failed to get user data directory")
 	}
-
-	// Create eino-cli directory if it doesn't exist
-	logDir := filepath.Join(homeDir, ".eino-cli")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return fmt.Errorf("failed to create log directory: %v", err)
 	}
 
 	// Create log file path
-	logPath := filepath.Join(logDir, "eino-cli.log")
+	logPath := filepath.Join(logDir, "oni3.log")
 
 	// Open log file (append mode, create if doesn't exist)
 	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -54,7 +53,7 @@ func Init() error {
 	}
 
 	// Write startup message
-	logger.debug(INFO, "LOGGER", "Eino CLI logging initialized")
+	logger.debug(INFO, "LOGGER", "Oni3 logging initialized")
 	logger.debug(INFO, "LOGGER", fmt.Sprintf("Log file: %s", logPath))
 
 	return nil
@@ -63,7 +62,7 @@ func Init() error {
 // Close closes the log file
 func Close() error {
 	if logger != nil && logger.file != nil {
-		logger.debug(INFO, "LOGGER", "Eino CLI logging shutdown")
+		logger.debug(INFO, "LOGGER", "Oni3 logging shutdown")
 		return logger.file.Close()
 	}
 	return nil

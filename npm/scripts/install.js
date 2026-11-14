@@ -5,6 +5,6 @@
 try {
   require('../lib/install').ensureBinarySync();
 } catch (err) {
-  console.warn(`[eino-cli] binary download skipped: ${err.message}`);
-  console.warn('[eino-cli] it will be retried on first run');
+  console.warn(`[oni3] binary download skipped: ${err.message}`);
+  console.warn('[oni3] it will be retried on first run');
 }

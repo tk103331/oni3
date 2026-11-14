@@ -9,18 +9,18 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/agent"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/logger"
-	"github.com/tk103331/eino-cli/session"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/agent"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/session"
+	"github.com/tk103331/oni3/tools"
 )
 
 // AgentApp represents the Agent application structure
 type AgentApp struct {
 	agentName     string
 	modelOverride string // runtime model override via /model
-	skill         string // active skill via /skill
+	skill         string // selected skill via /skill
 	mouseEnabled  bool
 	program       *tea.Program
 	model         *ViewModel
@@ -58,7 +58,7 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	logger.Debug("UI-AGENT", fmt.Sprintf("Agent config: Model=%s, Tools=%v, MCP=%v",
 		agentConfig.Model, agentConfig.Tools, agentConfig.MCPServers))
 
-	// Interactive tools (ask_user / todolist) need config entries and a TUI host;
+	// Interactive tools (ask_user / todo_list) need config entries and a TUI host;
 	// they are added through the effective config so config files stay clean.
 	ensureInteractiveToolConfigs(cfg)
 
@@ -72,10 +72,12 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	// The session header records the model actually in use, not the configured
 	// default that a remembered /model switch may override.
 	app.sess = session.New(session.KindAgent, agentName, app.currentModelName(), "")
-	// Build the agent from the effective config (interactive tools included).
-	if err := app.rebuildAgent(); err != nil {
-		logger.Error("UI-AGENT", fmt.Sprintf("Failed to create agent: %v", err))
-		return nil, fmt.Errorf("failed to create Agent: %v", err)
+	// A provider-only configuration can enter the TUI and import its first model.
+	if app.currentModelName() != "" {
+		if err := app.rebuildAgent(); err != nil {
+			logger.Error("UI-AGENT", fmt.Sprintf("Failed to create agent: %v", err))
+			return nil, fmt.Errorf("failed to create Agent: %v", err)
+		}
 	}
 
 	// Create Agent model, passing in the callback function for sending messages
@@ -86,6 +88,9 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	agentModel.SetOnClear(app.startNewSession)
 	agentModel.SetOnInterrupt(app.Interrupt)
 	app.registerCommands()
+	if app.currentModelName() == "" {
+		agentModel.appendCommandMessage("输入 /provider 选择提供商并添加第一个模型", false)
+	}
 
 	// Create Bubble Tea program
 	app.program = tea.NewProgram(agentModel, tea.WithAltScreen())
@@ -98,7 +103,17 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 // the model actually in use (a /model switch or a remembered choice wins over
 // the configured default).
 func (app *AgentApp) headerSubtitle() string {
-	return headerLabel(app.agentName, app.currentModelName())
+	return headerLabel(app.displayName(), app.currentModelName())
+}
+
+// displayName returns the label of the active agent. It is the configured
+// name when the agent defines one, and the configuration key otherwise.
+func (app *AgentApp) displayName() string {
+	cfg := config.GetConfig()
+	if cfg == nil {
+		return app.agentName
+	}
+	return cfg.AgentDisplayName(app.agentName)
 }
 
 // headerLabel joins the agent and model names, skipping empty parts.
@@ -136,6 +151,7 @@ func (app *AgentApp) toggleMouse() bool {
 
 // Run runs the Agent application
 func (app *AgentApp) Run() error {
+	defer app.model.closeProvider()
 	return runTUI(app.program)
 }
 
@@ -153,6 +169,14 @@ func runTUI(program *tea.Program) error {
 
 // sendMessage sends a message to AI
 func (app *AgentApp) sendMessage(message string) error {
+	if app.currentModelName() == "" {
+		return fmt.Errorf("请先通过 /provider 添加模型，或通过 /model 选择模型")
+	}
+	if app.agent == nil {
+		if err := app.rebuildAgent(); err != nil {
+			return err
+		}
+	}
 	logger.Info("UI-AGENT", fmt.Sprintf("Sending message: %s", truncateForLog(message)))
 
 	// Get the effective agent configuration (config + model/skill overrides)
@@ -224,23 +248,43 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 		thought.Reset()
 	}
 
-	// The eino callback layer can emit the same tool start more than once.
-	// Track outstanding calls so the resumed transcript has no duplicates and
-	// every start can still be paired with its end.
-	pendingTools := make(map[string][]string)
-	recordToolStart := func(name, arguments string) {
+	// The eino callback layer reports one event per tool call. Track the
+	// calls that are still running so every start is paired with its end and
+	// the persisted transcript has no duplicates.
+	type pendingCall struct {
+		id        string
+		name      string
+		arguments string
+	}
+	var pending []pendingCall
+	seenCalls := make(map[string]bool)
+	recordToolStart := func(name, callID, arguments string) {
 		flushThought()
-		for _, a := range pendingTools[name] {
-			if a == arguments {
+		if callID != "" {
+			if seenCalls[callID] {
 				return
 			}
+			seenCalls[callID] = true
+		} else {
+			for _, p := range pending {
+				if p.name == name && p.arguments == arguments {
+					return
+				}
+			}
 		}
-		pendingTools[name] = append(pendingTools[name], arguments)
+		pending = append(pending, pendingCall{id: callID, name: name, arguments: arguments})
 		app.recordToolStart(name, arguments)
 	}
-	recordToolEnd := func(name, result string, failed bool) {
-		if list := pendingTools[name]; len(list) > 0 {
-			pendingTools[name] = list[1:]
+	recordToolEnd := func(name, callID, result string, failed bool) {
+		for i := range pending {
+			if callID != "" && pending[i].id == callID {
+				pending = append(pending[:i], pending[i+1:]...)
+				break
+			}
+			if callID == "" && pending[i].name == name {
+				pending = append(pending[:i], pending[i+1:]...)
+				break
+			}
 		}
 		app.recordToolEnd(name, result, failed)
 	}
@@ -259,23 +303,35 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 				case "start":
 					logger.Info("UI-TOOL", fmt.Sprintf("Starting: %s", v.Name))
 					logger.Debug("UI-TOOL", fmt.Sprintf("Arguments: %s", v.Arguments))
-					recordToolStart(v.Name, v.Arguments)
+					recordToolStart(v.Name, v.CallID, v.Arguments)
 					app.program.Send(ToolStartMsg{
 						Name:      v.Name,
+						CallID:    v.CallID,
 						Arguments: v.Arguments,
 					})
 				case "end":
 					logger.Info("UI-TOOL", fmt.Sprintf("Completed: %s", v.Name))
 					logger.Debug("UI-TOOL", fmt.Sprintf("Result: %s", truncateForLog(v.Result)))
-					recordToolEnd(v.Name, v.Result, false)
+					failed := agent.IsToolError(v.Result)
+					recordToolEnd(v.Name, v.CallID, v.Result, failed)
 					app.program.Send(ToolEndMsg{
 						Name:   v.Name,
+						CallID: v.CallID,
 						Result: v.Result,
+						Failed: failed,
 					})
 				case "error":
+					// A failed call is shown on its own row instead of as an
+					// extra error block: the same failure used to be reported
+					// up to four times.
 					logger.Error("UI-TOOL", fmt.Sprintf("Tool %s error: %s", v.Name, v.Error))
-					recordToolEnd(v.Name, "Error: "+v.Error, true)
-					app.program.Send(ErrorMsg(fmt.Sprintf("Tool %s error: %s", v.Name, v.Error)))
+					recordToolEnd(v.Name, v.CallID, v.Error, true)
+					app.program.Send(ToolEndMsg{
+						Name:   v.Name,
+						CallID: v.CallID,
+						Result: v.Error,
+						Failed: true,
+					})
 				}
 			} else {
 				logger.Debug("UI-CALLBACK", fmt.Sprintf("Filtered internal component: %s", v.Name))
@@ -290,7 +346,7 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 			if !isInternal {
 				logger.Info("UI-TOOL", fmt.Sprintf("Starting (legacy): %s", v.Name))
 				logger.Debug("UI-TOOL", fmt.Sprintf("Arguments: %s", v.Arguments))
-				recordToolStart(v.Name, v.Arguments)
+				recordToolStart(v.Name, "", v.Arguments)
 				app.program.Send(ToolStartMsg{
 					Name:      v.Name,
 					Arguments: v.Arguments,
@@ -306,7 +362,7 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 			if !isInternal {
 				logger.Info("UI-TOOL", fmt.Sprintf("Completed (legacy): %s", v.Name))
 				logger.Debug("UI-TOOL", fmt.Sprintf("Result: %s", truncateForLog(v.Result)))
-				recordToolEnd(v.Name, v.Result, false)
+				recordToolEnd(v.Name, "", v.Result, false)
 				app.program.Send(ToolEndMsg{
 					Name:   v.Name,
 					Result: v.Result,
@@ -323,6 +379,9 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 
 	// Create streaming content callback function
 	var answer strings.Builder
+	// A failure is reported once: the stream callback and the returned error
+	// describe the same problem, showing both repeated it in the transcript.
+	errorReported := false
 	chunkCallback := func(chunk *agent.StreamChunk) {
 		switch chunk.Type {
 		case "content":
@@ -338,12 +397,13 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 				app.program.Send(ReasoningChunkMsg(chunk.Content))
 			}
 		case "error":
+			errorReported = true
 			app.program.Send(ErrorMsg(chunk.Content))
 		}
 	}
 
 	// Use Agent's ChatStream method for streaming conversation. The context
-	// carries the host so ask_user/todolist can reach the TUI.
+	// carries the host so ask_user/todo_list can reach the TUI.
 	logger.Info("UI-AGENT", "Calling agent ChatStream")
 	ctx = tools.WithHost(ctx, app)
 	err := app.agent.ChatStream(ctx, history, prompt, chunkCallback, toolCallback)
@@ -361,7 +421,9 @@ func (app *AgentApp) processConversation(ctx context.Context, history []*schema.
 			return
 		}
 		logger.Error("UI-AGENT", fmt.Sprintf("AI response error: %v", err))
-		app.program.Send(ErrorMsg(fmt.Sprintf("AI response error: %v", err)))
+		if !errorReported {
+			app.program.Send(ErrorMsg(fmt.Sprintf("AI response error: %v", err)))
+		}
 	} else {
 		logger.Info("UI-AGENT", "ChatStream completed successfully")
 		app.recordTurn(session.RoleAssistant, answer.String())
@@ -385,12 +447,15 @@ func isInternalComponent(name string) bool {
 	return false
 }
 
-// truncateForLog truncates text for logging to avoid huge log entries
+// truncateForLog truncates text for logging to avoid huge log entries. The cut
+// is made on a rune boundary so multi-byte text stays valid.
 func truncateForLog(text string) string {
-	if len(text) > 200 {
-		return text[:197] + "..."
+	const max = 197
+	runes := []rune(text)
+	if len(runes) <= max {
+		return text
 	}
-	return text
+	return string(runes[:max]) + "..."
 }
 
 // Stop stops the Agent application

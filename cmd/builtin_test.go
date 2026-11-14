@@ -1,11 +1,12 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/state"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/state"
+	"github.com/tk103331/oni3/tools"
 )
 
 func TestEnsureBuiltinAgentUsesDefaultModel(t *testing.T) {
@@ -34,12 +35,20 @@ func TestEnsureBuiltinAgentUsesDefaultModel(t *testing.T) {
 	if agent.System == "" {
 		t.Fatal("builtin agent system prompt missing")
 	}
+	// The built-in agent carries its display name, so the interface shows
+	// "OniThree" instead of the configuration key.
+	if got := cfg.AgentDisplayName(name); got != builtinAgentDisplayName {
+		t.Fatalf("display name = %q, want %q", got, builtinAgentDisplayName)
+	}
+	if !strings.Contains(agent.System, builtinAgentDisplayName) {
+		t.Fatalf("system prompt does not mention %q: %q", builtinAgentDisplayName, agent.System)
+	}
 
 	// The built-in agent ships with a default tool set, and every tool it
 	// references has a config entry.
 	want := []string{
-		"commandline", "filesystem", "httprequest", "browseruse",
-		tools.SubagentToolName, tools.AskUserToolName, tools.TodoToolName,
+		"command_line", "file_system", "http_request", "browser_use", tools.JavaScriptToolName,
+		tools.SubagentToolName, tools.AskUserToolName, tools.TodoListToolName,
 	}
 	if len(agent.Tools) != len(want) {
 		t.Fatalf("tools = %v, want %v", agent.Tools, want)
@@ -58,30 +67,30 @@ func TestEnsureBuiltinAgentKeepsCustomToolConfig(t *testing.T) {
 	cfg := &config.Config{
 		Models: map[string]config.Model{"m": {Provider: "p", Model: "m"}},
 		Tools: map[string]config.Tool{
-			"commandline": {Type: "commandline", Description: "my shell"},
+			"command_line": {Type: "command_line", Description: "my shell"},
 		},
 	}
 
 	if _, err := ensureBuiltinAgent(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg.Tools["commandline"].Description; got != "my shell" {
+	if got := cfg.Tools["command_line"].Description; got != "my shell" {
 		t.Fatalf("custom tool config was overwritten: %q", got)
 	}
-	if _, ok := cfg.Tools["filesystem"]; !ok {
-		t.Fatal("missing default filesystem tool")
+	if _, ok := cfg.Tools["file_system"]; !ok {
+		t.Fatal("missing default file_system tool")
 	}
 
 	// A user-defined agent with the built-in name is left untouched.
 	cfg2 := &config.Config{
 		Models: map[string]config.Model{"m": {Provider: "p", Model: "m"}},
-		Agents: map[string]config.Agent{"Eino": {Model: "m", Tools: []string{"custom"}}},
+		Agents: map[string]config.Agent{"onthree": {Model: "m", Tools: []string{"custom"}}},
 	}
 	if _, err := ensureBuiltinAgent(cfg2); err != nil {
 		t.Fatal(err)
 	}
-	if got := cfg2.Agents["Eino"].Tools; len(got) != 1 || got[0] != "custom" {
-		t.Fatalf("user-defined Eino agent changed: %v", got)
+	if got := cfg2.Agents["onthree"].Tools; len(got) != 1 || got[0] != "custom" {
+		t.Fatalf("user-defined OniThree agent changed: %v", got)
 	}
 }
 
@@ -106,6 +115,17 @@ func TestEnsureBuiltinAgentFallbackModel(t *testing.T) {
 	}
 }
 
+func TestEnsureBuiltinAgentAllowsProviderOnboarding(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{"cloud": {Type: "openai", BaseURL: "https://example.com/v1"}}}
+	name, err := ensureBuiltinAgent(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != builtinAgentName || cfg.Agents[name].Model != "" {
+		t.Fatalf("provider onboarding agent: %q %+v", name, cfg.Agents[name])
+	}
+}
+
 func TestDropAgentTools(t *testing.T) {
 	cfg := &config.Config{
 		Models: map[string]config.Model{"m": {Provider: "p", Model: "m"}},
@@ -115,9 +135,9 @@ func TestDropAgentTools(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dropAgentTools(cfg, name, tools.AskUserToolName, tools.TodoToolName)
+	dropAgentTools(cfg, name, tools.AskUserToolName, tools.TodoListToolName)
 
-	want := []string{"commandline", "filesystem", "httprequest", "browseruse", tools.SubagentToolName}
+	want := []string{"command_line", "file_system", "http_request", "browser_use", tools.JavaScriptToolName, tools.SubagentToolName}
 	got := cfg.Agents[name].Tools
 	if len(got) != len(want) {
 		t.Fatalf("tools = %v, want %v", got, want)

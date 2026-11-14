@@ -17,11 +17,11 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
-// File-system operations exposed by the filesystem tool.
+// File-system operations exposed by the file_system tool.
 const (
 	fsOpRead   = "read"
 	fsOpWrite  = "write"
@@ -34,7 +34,7 @@ const (
 	fsOpGrep   = "grep"
 )
 
-// Limits used by the filesystem tool.
+// Limits used by the file_system tool.
 const (
 	fsDefaultMaxBytes   = 200 * 1024
 	fsDefaultMaxEntries = 500
@@ -43,7 +43,7 @@ const (
 	fsGrepMaxLineRunes  = 300
 )
 
-// fsTool reads and edits files below a single root directory. Every path given
+// fileSystemTool reads and edits files below a single root directory. Every path given
 // by the model is resolved against the root and rejected when it escapes it,
 // including through symlinks.
 //
@@ -51,7 +51,7 @@ const (
 // than as a Go error: the ReAct loop aborts the whole turn on a tool error,
 // while a result string lets the model see the problem and retry with a fixed
 // path. Only cancellation is reported as an error.
-type fsTool struct {
+type fileSystemTool struct {
 	info       *schema.ToolInfo
 	root       string
 	rootReal   string
@@ -60,7 +60,7 @@ type fsTool struct {
 	timeout    time.Duration
 }
 
-// NewFileSystemTool creates the "filesystem" tool.
+// NewFileSystemTool creates the "file_system" tool.
 //
 // Config options:
 //   - root: directory the tool may access (default: current working directory)
@@ -68,7 +68,7 @@ type fsTool struct {
 //   - max_entries: list/grep result cap (default 500 for list, 200 for grep)
 //   - timeout: per-call timeout in seconds (default 30)
 func NewFileSystemTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
-	t := &fsTool{
+	t := &fileSystemTool{
 		maxBytes:   fsDefaultMaxBytes,
 		maxEntries: fsDefaultMaxEntries,
 		timeout:    fsDefaultTimeout,
@@ -79,7 +79,7 @@ func NewFileSystemTool(name string, cfg config.Tool) (tool.InvokableTool, error)
 			if root := expandHome(strings.TrimSpace(v.String())); root != "" {
 				abs, err := filepath.Abs(root)
 				if err != nil {
-					return nil, fmt.Errorf("filesystem: invalid root %q: %w", root, err)
+					return nil, fmt.Errorf("file_system: invalid root %q: %w", root, err)
 				}
 				t.root = abs
 			}
@@ -104,17 +104,17 @@ func NewFileSystemTool(name string, cfg config.Tool) (tool.InvokableTool, error)
 	if t.root == "" {
 		wd, err := os.Getwd()
 		if err != nil {
-			return nil, fmt.Errorf("filesystem: cannot determine working directory: %w", err)
+			return nil, fmt.Errorf("file_system: cannot determine working directory: %w", err)
 		}
 		t.root = wd
 	}
 	t.root = filepath.Clean(t.root)
 	info, err := os.Stat(t.root)
 	if err != nil {
-		return nil, fmt.Errorf("filesystem: root %q is not accessible: %w", t.root, err)
+		return nil, fmt.Errorf("file_system: root %q is not accessible: %w", t.root, err)
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("filesystem: root %q is not a directory", t.root)
+		return nil, fmt.Errorf("file_system: root %q is not a directory", t.root)
 	}
 	t.rootReal = t.root
 	if real, err := filepath.EvalSymlinks(t.root); err == nil {
@@ -181,12 +181,12 @@ func NewFileSystemTool(name string, cfg config.Tool) (tool.InvokableTool, error)
 	return t, nil
 }
 
-func (t *fsTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+func (t *fileSystemTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return t.info, nil
 }
 
-// fsInput is the argument set shared by all operations.
-type fsInput struct {
+// fileSystemInput is the argument set shared by all operations.
+type fileSystemInput struct {
 	Operation string `json:"operation"`
 	Path      string `json:"path"`
 	Content   string `json:"content"`
@@ -198,8 +198,8 @@ type fsInput struct {
 	Glob      string `json:"glob"`
 }
 
-func (t *fsTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
-	var in fsInput
+func (t *fileSystemTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
+	var in fileSystemInput
 	if err := json.Unmarshal([]byte(argumentsInJSON), &in); err != nil {
 		return t.fail("invalid arguments: %v", err)
 	}
@@ -239,13 +239,13 @@ func (t *fsTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...
 // ---- helpers ----
 
 // fail reports an operational failure as a tool result so the model can react.
-func (t *fsTool) fail(format string, args ...any) (string, error) {
+func (t *fileSystemTool) fail(format string, args ...any) (string, error) {
 	return "error: " + fmt.Sprintf(format, args...), nil
 }
 
 // checkContext reports a deadline as a result (the model can retry) and
 // cancellation as an error (the turn really should stop).
-func (t *fsTool) checkContext(ctx context.Context) (string, error) {
+func (t *fileSystemTool) checkContext(ctx context.Context) (string, error) {
 	if ctx.Err() == nil {
 		return "", nil
 	}
@@ -256,7 +256,7 @@ func (t *fsTool) checkContext(ctx context.Context) (string, error) {
 }
 
 // resolve turns a model-supplied path into an absolute path inside the root.
-func (t *fsTool) resolve(p string) (string, error) {
+func (t *fileSystemTool) resolve(p string) (string, error) {
 	p = strings.TrimSpace(p)
 	if p == "" {
 		p = "."
@@ -313,7 +313,7 @@ func withinRoot(root, p string) bool {
 }
 
 // display renders a path relative to the root for tool results.
-func (t *fsTool) display(p string) string {
+func (t *fileSystemTool) display(p string) string {
 	rel, err := filepath.Rel(t.root, p)
 	if err != nil || rel == "" {
 		return p
@@ -322,7 +322,7 @@ func (t *fsTool) display(p string) string {
 }
 
 // osError turns a file-system error into a short, model-friendly message.
-func (t *fsTool) osError(p string, err error) string {
+func (t *fileSystemTool) osError(p string, err error) string {
 	name := t.display(p)
 	switch {
 	case os.IsNotExist(err):
@@ -348,8 +348,8 @@ func expandHome(p string) string {
 
 // ApprovalRequest flags only mutating operations: reading and searching are
 // harmless, while write/append/mkdir/delete/move change the disk.
-func (t *fsTool) ApprovalRequest(arguments string) (approval.Request, bool) {
-	var in fsInput
+func (t *fileSystemTool) ApprovalRequest(arguments string) (approval.Request, bool) {
+	var in fileSystemInput
 	if err := json.Unmarshal([]byte(arguments), &in); err != nil {
 		return approval.Request{}, false
 	}
@@ -382,7 +382,7 @@ func (t *fsTool) ApprovalRequest(arguments string) (approval.Request, bool) {
 
 // ---- operations ----
 
-func (t *fsTool) read(ctx context.Context, in fsInput) (string, error) {
+func (t *fileSystemTool) read(ctx context.Context, in fileSystemInput) (string, error) {
 	p, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -456,7 +456,7 @@ func (t *fsTool) read(ctx context.Context, in fsInput) (string, error) {
 	return out, nil
 }
 
-func (t *fsTool) write(in fsInput, appendOp bool) (string, error) {
+func (t *fileSystemTool) write(in fileSystemInput, appendOp bool) (string, error) {
 	p, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -497,7 +497,7 @@ func (t *fsTool) write(in fsInput, appendOp bool) (string, error) {
 	return fmt.Sprintf("%s %d bytes to %s", verb, n, t.display(p)), nil
 }
 
-func (t *fsTool) list(ctx context.Context, in fsInput) (string, error) {
+func (t *fileSystemTool) list(ctx context.Context, in fileSystemInput) (string, error) {
 	p, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -586,7 +586,7 @@ func (t *fsTool) list(ctx context.Context, in fsInput) (string, error) {
 	return out, nil
 }
 
-func (t *fsTool) stat(in fsInput) (string, error) {
+func (t *fileSystemTool) stat(in fileSystemInput) (string, error) {
 	p, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -618,7 +618,7 @@ func (t *fsTool) stat(in fsInput) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-func (t *fsTool) mkdir(in fsInput) (string, error) {
+func (t *fileSystemTool) mkdir(in fileSystemInput) (string, error) {
 	p, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -632,7 +632,7 @@ func (t *fsTool) mkdir(in fsInput) (string, error) {
 	return "created directory " + t.display(p), nil
 }
 
-func (t *fsTool) delete(in fsInput) (string, error) {
+func (t *fileSystemTool) delete(in fileSystemInput) (string, error) {
 	p, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -662,7 +662,7 @@ func (t *fsTool) delete(in fsInput) (string, error) {
 	return "deleted " + t.display(p), nil
 }
 
-func (t *fsTool) move(in fsInput) (string, error) {
+func (t *fileSystemTool) move(in fileSystemInput) (string, error) {
 	src, err := t.resolve(in.Path)
 	if err != nil {
 		return t.fail("%v", err)
@@ -689,7 +689,7 @@ func (t *fsTool) move(in fsInput) (string, error) {
 	return fmt.Sprintf("moved %s -> %s", t.display(src), t.display(dst)), nil
 }
 
-func (t *fsTool) grep(ctx context.Context, in fsInput) (string, error) {
+func (t *fileSystemTool) grep(ctx context.Context, in fileSystemInput) (string, error) {
 	if strings.TrimSpace(in.Pattern) == "" {
 		return t.fail("pattern is required for operation=grep")
 	}

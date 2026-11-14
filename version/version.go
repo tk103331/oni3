@@ -1,5 +1,5 @@
 // Package version holds the build version. Release binaries inject it at build
-// time via -ldflags "-X github.com/tk103331/eino-cli/version.Version=...";
+// time via -ldflags "-X github.com/tk103331/oni3/version.Version=...";
 // `go install pkg@version` builds rely on the module version from build info.
 package version
 

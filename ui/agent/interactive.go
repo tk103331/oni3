@@ -7,13 +7,13 @@ import (
 	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/session"
-	"github.com/tk103331/eino-cli/tools"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/session"
+	"github.com/tk103331/oni3/tools"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
-// ---- host-interactive tools (ask_user / todolist) ----
+// ---- host-interactive tools (ask_user / todo_list) ----
 
 // approvalModeLabel reports the effective approval mode for /status.
 func approvalModeLabel() string {
@@ -105,7 +105,10 @@ func askApproval(ctx context.Context, program *tea.Program, req approval.Request
 
 	question := req.Summary
 	if req.Tool != "" {
-		question = req.Tool + " · " + question
+		if question == "调用工具 "+req.Tool {
+			question = "调用工具"
+		}
+		question = toolDisplayName(req.Tool) + " · " + question
 	}
 	detail := req.Detail
 	const maxDetail = 400
@@ -142,8 +145,8 @@ func ensureInteractiveToolConfigs(cfg *config.Config) {
 	if _, ok := cfg.Tools[tools.AskUserToolName]; !ok {
 		cfg.Tools[tools.AskUserToolName] = config.Tool{Type: tools.AskUserToolType}
 	}
-	if _, ok := cfg.Tools[tools.TodoToolName]; !ok {
-		cfg.Tools[tools.TodoToolName] = config.Tool{Type: tools.TodoToolType}
+	if _, ok := cfg.Tools[tools.TodoListToolName]; !ok {
+		cfg.Tools[tools.TodoListToolName] = config.Tool{Type: tools.TodoListToolType}
 	}
 }
 

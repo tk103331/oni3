@@ -63,7 +63,7 @@ func TestTUIRendering(t *testing.T) {
 	// Tool call lifecycle
 	m = drive(m, ToolStartMsg{Name: "web_search", Arguments: `{"query":"weather"}`})
 	out = m.View()
-	if !strings.Contains(out, "web_search") || !strings.Contains(out, "running") {
+	if !strings.Contains(out, "WebSearch") || !strings.Contains(out, "running") {
 		t.Fatalf("tool start missing:\n%s", out)
 	}
 	m = drive(m, ToolEndMsg{Name: "web_search", Result: `{"result":"sunny 25C"}`})
@@ -303,7 +303,7 @@ func TestCollapsibleToolCall(t *testing.T) {
 
 	// Folded by default: the tool line is visible but its result is hidden.
 	out := m.View()
-	if !strings.Contains(out, "shell") {
+	if !strings.Contains(out, "Shell") {
 		t.Fatalf("tool line missing:\n%s", out)
 	}
 	if strings.Contains(out, "RESULT_TOKEN_X") {
@@ -370,8 +370,8 @@ func TestViewFillsTerminalHeight(t *testing.T) {
 	}
 	lines := strings.Split(out, "\n")
 	last := strings.TrimRight(lines[29], " ")
-	if !strings.HasPrefix(last, "↑↓ scroll") {
-		t.Fatalf("help bar should stay at the bottom with palette visible: %q", last)
+	if !strings.HasPrefix(last, "↑↓ select") {
+		t.Fatalf("palette navigation hints should stay at the bottom: %q", last)
 	}
 	if prev := strings.TrimRight(lines[28], " "); !strings.HasPrefix(prev, "╰") {
 		t.Fatalf("input box should stay above the help bar with palette visible: %q", prev)
@@ -455,7 +455,7 @@ func TestMouseClickTogglesToolBlock(t *testing.T) {
 	}
 
 	// Clicking the folded tool line expands it and shows the result.
-	m = drive(m, tea.MouseMsg{X: 5, Y: lineY("search"), Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m = drive(m, tea.MouseMsg{X: 5, Y: lineY("Search"), Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if !m.expanded[1] {
 		t.Fatal("left click should expand the tool block")
 	}
@@ -464,7 +464,7 @@ func TestMouseClickTogglesToolBlock(t *testing.T) {
 	}
 
 	// Clicking again folds it.
-	row := lineY("search")
+	row := lineY("Search")
 	m = drive(m, tea.MouseMsg{X: 5, Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if m.expanded[1] {
 		t.Fatal("second click should fold the tool block")
@@ -507,8 +507,8 @@ func TestSelectedFoldableRowIsHighlighted(t *testing.T) {
 	m := NewViewModel(func(string) error { return nil })
 	m = drive(m, tea.WindowSizeMsg{Width: 80, Height: 30})
 	m = drive(m,
-		ToolStartMsg{Name: "filesystem", Arguments: `{"operation":"list","path":"."}`},
-		ToolEndMsg{Name: "filesystem", Result: "ok"},
+		ToolStartMsg{Name: "file_system", Arguments: `{"operation":"list","path":"."}`},
+		ToolEndMsg{Name: "file_system", Result: "ok"},
 	)
 
 	// Tab selects the newest foldable row; it must be highlighted across the
@@ -520,7 +520,7 @@ func TestSelectedFoldableRowIsHighlighted(t *testing.T) {
 
 	found := false
 	for _, line := range strings.Split(m.View(), "\n") {
-		if !strings.Contains(line, "filesystem") {
+		if !strings.Contains(line, "FileSystem") {
 			continue
 		}
 		found = true

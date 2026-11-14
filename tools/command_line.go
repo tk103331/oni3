@@ -11,35 +11,35 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
-// shellTool runs a shell command on the local system.
+// commandLineTool runs a shell command on the local system.
 //
-// Previously this wrapped eino-ext commandline.NewStrReplaceEditor, which
+// Previously this wrapped eino-ext command_line.NewStrReplaceEditor, which
 // requires an Operator implementation (upstream examples need a Docker
 // sandbox). For a local CLI a plain self-contained shell tool is the right
 // fit, so it is implemented directly on top of os/exec.
-type shellTool struct {
+type commandLineTool struct {
 	info    *schema.ToolInfo
-	workdir string
+	workDir string
 	timeout time.Duration
 }
 
-// NewCommandLineTool creates the "commandline" shell tool.
+// NewCommandLineTool creates the "command_line" shell tool.
 //
 // Config options:
-//   - workdir: working directory for commands (optional)
+//   - work_dir: working directory for commands (optional)
 //   - timeout: execution timeout in seconds (default 60)
 func NewCommandLineTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
-	t := &shellTool{
+	t := &commandLineTool{
 		timeout: 60 * time.Second,
 	}
 
 	if cfg.Config != nil {
-		if v, ok := cfg.Config["workdir"]; ok {
-			t.workdir = v.String()
+		if v, ok := cfg.Config["work_dir"]; ok {
+			t.workDir = v.String()
 		}
 		if v, ok := cfg.Config["timeout"]; ok {
 			if secs := v.Int(); secs > 0 {
@@ -69,17 +69,17 @@ func NewCommandLineTool(name string, cfg config.Tool) (tool.InvokableTool, error
 	return t, nil
 }
 
-func (t *shellTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+func (t *commandLineTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return t.info, nil
 }
 
-type shellInput struct {
+type commandLineInput struct {
 	Command string `json:"command"`
 }
 
 // ApprovalRequest flags every shell command: the tool can do anything.
-func (t *shellTool) ApprovalRequest(arguments string) (approval.Request, bool) {
-	var in shellInput
+func (t *commandLineTool) ApprovalRequest(arguments string) (approval.Request, bool) {
+	var in commandLineInput
 	summary := "运行 shell 命令"
 	if err := json.Unmarshal([]byte(arguments), &in); err == nil && strings.TrimSpace(in.Command) != "" {
 		summary = "运行命令：" + strings.TrimSpace(in.Command)
@@ -87,8 +87,8 @@ func (t *shellTool) ApprovalRequest(arguments string) (approval.Request, bool) {
 	return approval.Request{Tool: t.info.Name, Summary: summary, Detail: arguments}, true
 }
 
-func (t *shellTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
-	in := &shellInput{}
+func (t *commandLineTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ ...tool.Option) (string, error) {
+	in := &commandLineInput{}
 	if err := json.Unmarshal([]byte(argumentsInJSON), in); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
@@ -102,8 +102,8 @@ func (t *shellTool) InvokableRun(ctx context.Context, argumentsInJSON string, _ 
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
-	if t.workdir != "" {
-		cmd.Dir = t.workdir
+	if t.workDir != "" {
+		cmd.Dir = t.workDir
 	}
 
 	var stdout, stderr bytes.Buffer

@@ -9,17 +9,17 @@ import (
 	"github.com/cloudwego/eino-ext/components/tool/browseruse"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // NewBrowserUseTool creates browser usage tool.
 //
 // The upstream constructor launches Chrome immediately, which made every agent
-// startup pop a browser window (browseruse is one of the built-in agent's
+// startup pop a browser window (browser_use is one of the built-in agent's
 // default tools). The returned tool therefore starts the browser lazily, on
 // the first actual tool call.
 func NewBrowserUseTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
-	t := &browserTool{}
+	t := &browserUseTool{}
 	if v, ok := cfg.Config["headless"]; ok {
 		t.headless = v.Bool()
 	}
@@ -116,8 +116,8 @@ func browserActions() []string {
 	}
 }
 
-// browserTool starts the underlying browser only when it is first used.
-type browserTool struct {
+// browserUseTool starts the underlying browser only when it is first used.
+type browserUseTool struct {
 	info            *schema.ToolInfo
 	headless        bool
 	disableSecurity bool
@@ -130,13 +130,13 @@ type browserTool struct {
 }
 
 // Info returns the tool metadata without touching the browser.
-func (t *browserTool) Info(context.Context) (*schema.ToolInfo, error) {
+func (t *browserUseTool) Info(context.Context) (*schema.ToolInfo, error) {
 	return t.info, nil
 }
 
 // InvokableRun starts the browser on the first call, then reuses it. Calls are
 // serialized because a browser session is stateful.
-func (t *browserTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+func (t *browserUseTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 

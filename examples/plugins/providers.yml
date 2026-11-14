@@ -1,0 +1,12 @@
+# Start without any predefined models:
+# eino --config examples/plugins/providers.yml
+# Then /provider -> catalog__cloud or catalog__local -> select one or all models.
+plugins:
+  catalog:
+    path: ./providers.js
+
+# Optional: credentials and endpoint overrides for a plugin provider.
+# providers:
+#   catalog__cloud:
+#     api_key: your-api-key
+#     base_url: https://your-openai-compatible-service.example/v1

@@ -8,18 +8,8 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
-)
-
-// Names and config types of the host-interactive tools. The TUI registers
-// these automatically for agent sessions; config entries with the same type
-// can be added to other modes (run/ACP) but need a Host in the context.
-const (
-	AskUserToolName = "ask_user"
-	AskUserToolType = "askuser"
-	TodoToolName    = "todolist"
-	TodoToolType    = "todolist"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 // Todo statuses. The model is asked to pass the complete list on every call.
@@ -143,19 +133,19 @@ func cleanOptions(options []string) []string {
 
 // ---- todo ----
 
-// TodoTool maintains the task list shown by the host.
-type TodoTool struct {
+// TodoListTool maintains the task list shown by the host.
+type TodoListTool struct {
 	info *schema.ToolInfo
 }
 
-// NewTodoTool creates the todo tool.
-func NewTodoTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
+// NewTodoListTool creates the todo tool.
+func NewTodoListTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
 	desc := cfg.Description
 	if desc == "" {
 		desc = "Create and update the task list for the current work. Pass the COMPLETE " +
 			"list on every call; each item has `content` and `status` (pending, in_progress, completed)."
 	}
-	return &TodoTool{info: &schema.ToolInfo{
+	return &TodoListTool{info: &schema.ToolInfo{
 		Name: name,
 		Desc: desc,
 		ParamsOneOf: schema.NewParamsOneOfByParams(map[string]*schema.ParameterInfo{
@@ -184,12 +174,12 @@ func NewTodoTool(name string, cfg config.Tool) (tool.InvokableTool, error) {
 }
 
 // Info returns the tool metadata.
-func (t *TodoTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
+func (t *TodoListTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
 	return t.info, nil
 }
 
 // InvokableRun replaces the host's task list and returns a summary.
-func (t *TodoTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
+func (t *TodoListTool) InvokableRun(ctx context.Context, argumentsInJSON string, opts ...tool.Option) (string, error) {
 	var args struct {
 		Todos []TodoItem `json:"todos"`
 	}
@@ -205,7 +195,16 @@ func (t *TodoTool) InvokableRun(ctx context.Context, argumentsInJSON string, opt
 		if content == "" {
 			continue
 		}
-		items = append(items, TodoItem{Content: content, Status: normalizeTodoStatus(item.Status)})
+		status := item.Status
+		if status == "" {
+			status = TodoPending
+		}
+		switch status {
+		case TodoPending, TodoInProgress, TodoCompleted:
+		default:
+			return "", fmt.Errorf("todo_list: invalid status %q; use pending, in_progress or completed", status)
+		}
+		items = append(items, TodoItem{Content: content, Status: status})
 	}
 
 	host := HostFromContext(ctx)
@@ -228,18 +227,6 @@ func (t *TodoTool) InvokableRun(ctx context.Context, argumentsInJSON string, opt
 		b.WriteString("\n" + todoMark(item.Status) + " " + item.Content)
 	}
 	return b.String(), nil
-}
-
-// normalizeTodoStatus maps common spellings onto the three supported statuses.
-func normalizeTodoStatus(status string) string {
-	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(status), "-", "_")) {
-	case "completed", "complete", "done":
-		return TodoCompleted
-	case "in_progress", "inprogress", "doing", "active":
-		return TodoInProgress
-	default:
-		return TodoPending
-	}
 }
 
 // todoMark renders the status glyph used in tool results.

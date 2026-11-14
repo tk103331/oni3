@@ -5,7 +5,7 @@ import (
 
 	"github.com/cloudwego/eino-ext/components/tool/googlesearch"
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // NewGoogleSearchTool creates Google search tool
@@ -30,13 +30,13 @@ func NewGoogleSearchTool(name string, cfg config.Tool) (tool.InvokableTool, erro
 	if baseURL, exists := cfg.Config["base_url"]; exists {
 		googleConfig.BaseURL = baseURL.String()
 	}
-	if num, exists := cfg.Config["num"]; exists {
-		if val := num.Int(); val > 0 {
+	if maxResults, exists := cfg.Config["max_results"]; exists {
+		if val := maxResults.Int(); val > 0 {
 			googleConfig.Num = val
 		}
 	}
-	if lang, exists := cfg.Config["lang"]; exists {
-		googleConfig.Lang = lang.String()
+	if language, exists := cfg.Config["language"]; exists {
+		googleConfig.Lang = language.String()
 	}
 
 	// Create tool instance

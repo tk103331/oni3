@@ -5,7 +5,7 @@ import (
 
 	"github.com/cloudwego/eino-ext/components/tool/bingsearch"
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // NewBingSearchTool creates Bing search tool

@@ -2,7 +2,7 @@ package agent
 
 import (
 	"fmt"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // Factory is used to create Agent instances

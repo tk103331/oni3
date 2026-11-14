@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -16,9 +17,10 @@ type SlashCommand struct {
 
 // CommandResult is returned by a command handler.
 type CommandResult struct {
-	Message  string // transcript message (empty = nothing to show)
-	Error    bool   // render the message as an error
-	Subtitle string // new header subtitle (empty = unchanged)
+	Message  string  // transcript message (empty = nothing to show)
+	Error    bool    // render the message as an error
+	Subtitle string  // new header subtitle (empty = unchanged)
+	Cmd      tea.Cmd // asynchronous work started by the command
 }
 
 // SlashHandler executes a command line without the leading slash.
@@ -45,11 +47,11 @@ func (m *ViewModel) allCommands() []SlashCommand {
 }
 
 // executeSlashCommand runs a slash command typed into the input box.
-func (m *ViewModel) executeSlashCommand(line string) {
+func (m *ViewModel) executeSlashCommand(line string) tea.Cmd {
 	body := strings.TrimSpace(strings.TrimPrefix(line, "/"))
 	if body == "" {
 		m.appendCommandMessage(m.helpText(), false)
-		return
+		return nil
 	}
 
 	name := body
@@ -60,18 +62,23 @@ func (m *ViewModel) executeSlashCommand(line string) {
 	switch strings.ToLower(name) {
 	case "clear":
 		m.clearConversation()
-		return
+		return nil
 	case "help":
 		m.appendCommandMessage(m.helpText(), false)
-		return
+		return nil
 	}
 
 	if m.onSlash == nil {
 		m.appendCommandMessage("未知命令：/"+name+"（输入 /help 查看可用命令）", true)
-		return
+		return nil
 	}
 
 	res := m.onSlash(body)
+	m.applyCommandResult(res)
+	return res.Cmd
+}
+
+func (m *ViewModel) applyCommandResult(res CommandResult) {
 	if res.Subtitle != "" {
 		m.SetSubtitle(res.Subtitle)
 	}
@@ -119,7 +126,7 @@ type paletteItem struct {
 // paletteActive reports whether the palette should be visible at all.
 func (m *ViewModel) paletteActive() bool {
 	raw := strings.TrimLeft(m.input, " \t")
-	return !m.isWaiting && strings.HasPrefix(raw, "/")
+	return !m.isWaiting && m.provider == nil && strings.HasPrefix(raw, "/")
 }
 
 // paletteItems returns the selectable rows for the current input.
@@ -140,14 +147,11 @@ func (m *ViewModel) paletteItems() []paletteItem {
 			}
 			fill := "/" + c.Name
 			exec := true
-			if c.Args != "" {
+			if c.Args != "" && !strings.HasPrefix(c.Args, "[") {
 				fill += " "
 				exec = false // continue typing the argument
 			}
 			items = append(items, paletteItem{line: m.formatCommandHint(c), fill: fill, exec: exec})
-			if len(items) >= 8 {
-				break
-			}
 		}
 		return items
 	}
@@ -271,9 +275,12 @@ func (m *ViewModel) slashHints() []string {
 // formatCommandHint renders one command row in the palette.
 func (m *ViewModel) formatCommandHint(c SlashCommand) string {
 	name := "/" + c.Name
-	if c.Args != "" {
+	if c.Args != "" && m.width >= 80 {
 		name += " " + c.Args
 	}
-	nameStyled := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent)).Bold(true).Render(name)
-	return nameStyled + m.muted().Render("   "+truncate(c.Description, maxInt(m.width-len(name)-8, 16)))
+	column := min(32, maxInt(m.width/2, 1))
+	name = truncate(name, column)
+	nameStyled := lipgloss.NewStyle().Bold(true).Render(name)
+	gap := strings.Repeat(" ", maxInt(column-lipgloss.Width(name)+2, 2))
+	return nameStyled + gap + m.muted().Render(truncate(c.Description, maxInt(m.width-column-4, 0)))
 }

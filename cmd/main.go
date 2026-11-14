@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"github.com/tk103331/eino-cli/logger"
+	"github.com/tk103331/oni3/logger"
 )
 
-// Main is the shared entry point for the `eino-cli` and `eino` binaries.
+// Main is the shared entry point for the `oni3` binary.
 // It initializes logging, handles signals and executes the root command.
 func Main() {
 	// The command name follows the binary name, so `eino --help` shows `eino`.
@@ -36,10 +36,10 @@ func Main() {
 		os.Exit(0)
 	}()
 
-	logger.Info("MAIN", "Eino CLI starting")
+	logger.Info("MAIN", "Oni3 starting")
 
 	// Execute the main command
 	Execute()
 
-	logger.Info("MAIN", "Eino CLI finished")
+	logger.Info("MAIN", "Oni3 finished")
 }

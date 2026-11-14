@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/tk103331/eino-cli/tools"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/tools"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 func receiveAnswer(t *testing.T, reply chan string) string {
@@ -57,10 +57,10 @@ func TestAskQuestionFreeTextAndCancel(t *testing.T) {
 	// No options: type a custom answer.
 	reply := make(chan string, 1)
 	m = drive(m, AskQuestionMsg{Question: "project name?", Reply: reply})
-	m = drive(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("eino")})
+	m = drive(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("oni3")})
 	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := receiveAnswer(t, reply); got != "eino" {
-		t.Fatalf("answer = %q, want eino", got)
+	if got := receiveAnswer(t, reply); got != "oni3" {
+		t.Fatalf("answer = %q, want oni3", got)
 	}
 
 	// With options, typing switches to a free-text answer.
@@ -227,7 +227,7 @@ func TestFinishedTodoPanelCollapsesOnNextInput(t *testing.T) {
 }
 
 func TestInteractiveToolsRegisteredForAgents(t *testing.T) {
-	ac := appendUnique(nil, tools.AskUserToolName, tools.AskUserToolName, tools.TodoToolName)
+	ac := appendUnique(nil, tools.AskUserToolName, tools.AskUserToolName, tools.TodoListToolName)
 	if len(ac) != 2 {
 		t.Fatalf("appendUnique dedupe failed: %v", ac)
 	}

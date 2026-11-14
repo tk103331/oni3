@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/tk103331/oni3/internal/datadir"
 )
 
 // skillFrontMatter is the optional YAML header of a skill markdown file.
@@ -22,10 +24,11 @@ func SkillDirectories() []string {
 	if err != nil || home == "" {
 		return nil
 	}
-	return []string{
-		filepath.Join(home, ".eino-cli", "skills"),
-		filepath.Join(home, ".agents", "skills"),
+	dirs := []string{filepath.Join(home, ".agents", "skills")}
+	if data := datadir.Dir(); data != "" {
+		dirs = append([]string{filepath.Join(data, "skills")}, dirs...)
 	}
+	return dirs
 }
 
 // parseSkillFile parses one skill markdown document. The document may start

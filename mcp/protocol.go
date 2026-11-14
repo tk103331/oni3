@@ -8,17 +8,20 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // createMCPClient creates MCP client based on configuration
 func (c *Client) createMCPClient(ctx context.Context, serverName string, serverConfig config.MCPServer) (*client.Client, error) {
+	if err := validateServerConfig(serverName, serverConfig); err != nil {
+		return nil, err
+	}
 	switch serverConfig.Type {
-	case "stdio", "STDIO":
+	case config.MCPTypeStdio:
 		return c.createStdioClient(ctx, serverConfig)
-	case "sse", "SSE":
+	case config.MCPTypeSSE:
 		return c.createSSEClient(ctx, serverConfig)
-	case "streamable-http", "STREAMABLE-HTTP", "http", "HTTP":
+	case config.MCPTypeStreamableHTTP:
 		return c.createStreamableHTTPClient(ctx, serverConfig)
 	default:
 		return nil, fmt.Errorf("unsupported MCP server type: %s", serverConfig.Type)

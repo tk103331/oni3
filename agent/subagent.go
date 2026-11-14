@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools"
 )
 
 // The subagent tool delegates to this package, which owns model and agent

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 // fakeHost records interactions from the interactive tools.
@@ -83,15 +83,15 @@ func TestAskUserTool(t *testing.T) {
 	}
 }
 
-func TestTodoTool(t *testing.T) {
-	tool, err := NewTodoTool(TodoToolName, config.Tool{})
+func TestTodoListTool(t *testing.T) {
+	tool, err := NewTodoListTool(TodoListToolName, config.Tool{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	args := `{"todos":[
-		{"content":"collect requirements","status":"done"},
-		{"content":"implement tool","status":"in-progress"},
+		{"content":"collect requirements","status":"completed"},
+		{"content":"implement tool","status":"in_progress"},
 		{"content":"write tests","status":"pending"},
 		{"content":"   ","status":"pending"}
 	]}`
@@ -135,9 +135,9 @@ func TestTodoTool(t *testing.T) {
 func TestInteractiveToolFactory(t *testing.T) {
 	ask, err := CreateTool(AskUserToolName, config.Tool{Type: AskUserToolType})
 	if err != nil || ask == nil {
-		t.Fatalf("askuser type not registered: %v", err)
+		t.Fatalf("ask_user type not registered: %v", err)
 	}
-	todo, err := CreateTool(TodoToolName, config.Tool{Type: TodoToolType})
+	todo, err := CreateTool(TodoListToolName, config.Tool{Type: TodoListToolType})
 	if err != nil || todo == nil {
 		t.Fatalf("todo type not registered: %v", err)
 	}

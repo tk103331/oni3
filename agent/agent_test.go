@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/tools"
 )
 
 func feedAll(f *ThinkFilter, chunks ...string) (visible, thought string) {
@@ -91,5 +91,17 @@ func TestWithActiveModelCarriesTheRunModel(t *testing.T) {
 	ctx := r.withActiveModel(context.Background())
 	if got := tools.ActiveModel(ctx); got != "ds" {
 		t.Fatalf("active model = %q, want ds", got)
+	}
+}
+
+func TestMaxSteps(t *testing.T) {
+	if got := NewReactAgent("a", &config.Agent{}).maxSteps(); got != config.DefaultMaxSteps {
+		t.Fatalf("default max steps = %d, want %d", got, config.DefaultMaxSteps)
+	}
+	if got := NewReactAgent("a", &config.Agent{MaxSteps: 7}).maxSteps(); got != 7 {
+		t.Fatalf("configured max steps = %d, want 7", got)
+	}
+	if got := NewReactAgent("a", nil).maxSteps(); got != config.DefaultMaxSteps {
+		t.Fatalf("nil config max steps = %d, want %d", got, config.DefaultMaxSteps)
 	}
 }

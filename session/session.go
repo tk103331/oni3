@@ -2,7 +2,7 @@
 // later from the CLI (/resume).
 //
 // Storage is append-only JSON Lines: one session is one <id>.jsonl file under
-// ~/.eino-cli/sessions, and every turn is written as its own line. User and
+// ~/.oni3/sessions, and every turn is written as its own line. User and
 // assistant text, model reasoning, tool calls, ask_user exchanges and task-list
 // snapshots are all recorded; nothing is ever rewritten, so an interrupted
 // turn leaves the file intact.
@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tk103331/eino-cli/state"
+	"github.com/tk103331/oni3/state"
 )
 
 // Event types stored in a session file.

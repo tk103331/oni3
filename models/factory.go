@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/cloudwego/eino/components/model"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // Factory is used to create ChatModel for different providers
@@ -32,23 +32,28 @@ func (f *Factory) CreateChatModel(ctx context.Context, modelName string) (model.
 		return nil, fmt.Errorf("provider configuration does not exist: %s", modelCfg.Provider)
 	}
 
-	// Create corresponding model based on provider type
-	switch providerCfg.Type {
-	case "openai":
+	// Use the same default and strict type validation as config and discovery,
+	// including when callers construct Config directly rather than loading YAML.
+	kind := providerCfg.EffectiveType()
+	if err := config.ValidateProviderType(kind); err != nil {
+		return nil, err
+	}
+	switch kind {
+	case config.ProviderTypeOpenAI:
 		return f.createOpenAIModel(ctx, &modelCfg, &providerCfg)
-	case "claude":
-		return f.createClaudeModel(ctx, &modelCfg, &providerCfg)
-	case "gemini":
+	case config.ProviderTypeAnthropic:
+		return f.createAnthropicModel(ctx, &modelCfg, &providerCfg)
+	case config.ProviderTypeGemini:
 		return f.createGeminiModel(ctx, &modelCfg, &providerCfg)
-	case "qwen":
+	case config.ProviderTypeQwen:
 		return f.createQwenModel(ctx, &modelCfg, &providerCfg)
-	case "qianfan":
+	case config.ProviderTypeQianfan:
 		return f.createQianfanModel(ctx, &modelCfg, &providerCfg)
-	case "ark":
+	case config.ProviderTypeArk:
 		return f.createArkModel(ctx, &modelCfg, &providerCfg)
-	case "deepseek":
+	case config.ProviderTypeDeepSeek:
 		return f.createDeepSeekModel(ctx, &modelCfg, &providerCfg)
-	case "ollama":
+	case config.ProviderTypeOllama:
 		return f.createOllamaModel(ctx, &modelCfg, &providerCfg)
 	default:
 		return nil, fmt.Errorf("unsupported provider type: %s", providerCfg.Type)

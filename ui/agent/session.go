@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/logger"
-	"github.com/tk103331/eino-cli/session"
+	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/session"
 )
 
 // ---- AgentApp persistence state ----

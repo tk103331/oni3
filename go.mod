@@ -1,8 +1,9 @@
-module github.com/tk103331/eino-cli
+module github.com/tk103331/oni3
 
-go 1.24.0
+go 1.25
 
 require (
+	github.com/MoeForge/moejs v0.1.0
 	github.com/charmbracelet/bubbletea v1.3.9
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
@@ -26,7 +27,9 @@ require (
 	github.com/cloudwego/eino-ext/components/tool/sequentialthinking v0.0.0-20261109121412-fa3cb9b7ad6a
 	github.com/cloudwego/eino-ext/components/tool/wikipedia v0.0.0-20261109121412-fa3cb9b7ad6a
 	github.com/coder/acp-go-sdk v0.13.5
+	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/mark3labs/mcp-go v0.43.0
+	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.1
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -36,6 +39,7 @@ require (
 	cloud.google.com/go/auth v0.10.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.5 // indirect
 	cloud.google.com/go/compute/metadata v0.5.2 // indirect
+	github.com/MoeForge/moego v0.1.0-alpha.1 // indirect
 	github.com/PuerkitoBio/goquery v1.10.3 // indirect
 	github.com/alecthomas/chroma/v2 v2.14.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
@@ -79,7 +83,6 @@ require (
 	github.com/corpix/uarand v0.2.0 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/eino-contrib/ollama v0.1.0 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
@@ -122,7 +125,6 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
 	github.com/ollama/ollama v0.11.4 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect

@@ -6,7 +6,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/tools/approval"
+	"github.com/tk103331/oni3/tools/approval"
 )
 
 // approvalTool wraps a tool so its dangerous calls are confirmed by the user
@@ -22,7 +22,7 @@ type approvalTool struct {
 }
 
 // WithApproval wraps inner with the given approval policy. Tools that only talk
-// to the user (ask_user, todolist) are never gated.
+// to the user (ask_user, todo_list) are never gated.
 func WithApproval(inner tool.InvokableTool, policy approval.Policy) (tool.InvokableTool, error) {
 	if inner == nil {
 		return nil, fmt.Errorf("approval: nil tool")
@@ -35,7 +35,8 @@ func WithApproval(inner tool.InvokableTool, policy approval.Policy) (tool.Invoka
 	if info != nil {
 		name = info.Name
 	}
-	if name == AskUserToolName || name == TodoToolName {
+	switch inner.(type) {
+	case *AskUserTool, *TodoListTool:
 		return inner, nil
 	}
 	if policy.ModeOrDefault() == approval.ModeOff {

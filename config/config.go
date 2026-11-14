@@ -1,35 +1,73 @@
 package config
 
 import (
+	"bytes"
+	"context"
 	"fmt"
-	"github.com/cloudwego/eino-ext/callbacks/langfuse"
+	"io"
 	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 
+	"github.com/tk103331/oni3/plugins"
 	"gopkg.in/yaml.v3"
 )
 
 // Private global variable to store configuration
 var globalConfig *Config
 
-// Config represents the configuration for Eino CLI
+// DefaultMaxSteps is the ReAct loop cap used when an agent does not set
+// max_steps. Eino's own default (12) is far too low once tools are involved.
+const DefaultMaxSteps = 1000
+
+// Config represents the configuration for Oni3
 type Config struct {
-	Agents       map[string]Agent     `yaml:"agents,omitempty"`
-	Providers    map[string]Provider  `yaml:"providers,omitempty"`
-	Models       map[string]Model     `yaml:"models,omitempty"`
-	DefaultModel string               `yaml:"default_model,omitempty"`
-	MCPServers   map[string]MCPServer `yaml:"mcp_servers,omitempty"`
-	Tools        map[string]Tool      `yaml:"tools,omitempty"`
-	Skills       map[string]Skill     `yaml:"skills,omitempty"`
-	Settings     Settings             `yaml:"settings,omitempty"`
+	Agents        map[string]Agent          `yaml:"agents,omitempty"`
+	Providers     map[string]Provider       `yaml:"providers,omitempty"`
+	Models        map[string]Model          `yaml:"models,omitempty"`
+	DefaultModel  string                    `yaml:"default_model,omitempty"`
+	MCPServers    map[string]MCPServer      `yaml:"mcp_servers,omitempty"`
+	Tools         map[string]Tool           `yaml:"tools,omitempty"`
+	Skills        map[string]Skill          `yaml:"skills,omitempty"`
+	Settings      Settings                  `yaml:"settings,omitempty"`
+	Plugins       map[string]plugins.Config `yaml:"plugins,omitempty"`
+	PluginThemes  map[string]plugins.Theme  `yaml:"-"`
+	LoadedPlugins []*plugins.Plugin         `yaml:"-"`
+	SourcePath    string                    `yaml:"-"`
+
+	providerOverrides map[string]yaml.Node
 }
 
 // Agent represents AI agent configuration
 type Agent struct {
-	System     string   `yaml:"system"`
-	Model      string   `yaml:"model"`
-	Tools      []string `yaml:"tools,omitempty"`
-	MCPServers []string `yaml:"mcp_servers,omitempty"`
+	// Name is the label shown in the interface. It is optional: when it is
+	// empty the configuration key is used as the label.
+	Name        string   `yaml:"name,omitempty"`
+	Description string   `yaml:"description,omitempty"`
+	System      string   `yaml:"system"`
+	Model       string   `yaml:"model"`
+	Tools       []string `yaml:"tools,omitempty"`
+	MCPServers  []string `yaml:"mcp_servers,omitempty"`
+	// MaxSteps caps the ReAct loop (model + tool rounds). It defaults to
+	// DefaultMaxSteps when unset.
+	MaxSteps int `yaml:"max_steps,omitempty"`
+}
+
+// AgentDisplayName returns the label of the agent with the given
+// configuration key. It falls back to the key itself when no name is set.
+func (c *Config) AgentDisplayName(key string) string {
+	if c == nil {
+		return key
+	}
+	agent, ok := c.Agents[key]
+	if !ok {
+		return key
+	}
+	if name := strings.TrimSpace(agent.Name); name != "" {
+		return name
+	}
+	return key
 }
 
 // Skill represents an optional capability preset that can be switched on at
@@ -43,9 +81,20 @@ type Skill struct {
 
 // Provider represents AI provider configuration
 type Provider struct {
-	Type    string `yaml:"type"`
-	BaseURL string `yaml:"base_url,omitempty"`
-	APIKey  string `yaml:"api_key,omitempty"`
+	// Type is an exact canonical identifier (see ProviderType constants).
+	// Only the empty string defaults to openai; aliases and case variants fail.
+	Type        string `yaml:"type,omitempty"`
+	BaseURL     string `yaml:"base_url,omitempty"`
+	APIKey      string `yaml:"api_key,omitempty"`
+	Description string `yaml:"description,omitempty"`
+	// ModelsURL may be absolute or relative to BaseURL. A relative path such as
+	// "models" appends to its base path; "/models" replaces the base path.
+	ModelsURL      string            `yaml:"models_url,omitempty"`
+	ModelsPath     string            `yaml:"models_path,omitempty"`
+	ModelIDPath    string            `yaml:"model_id_path,omitempty"`
+	ModelNamePath  string            `yaml:"model_name_path,omitempty"`
+	ModelHeaders   map[string]string `yaml:"model_headers,omitempty"`
+	APIKeyOptional bool              `yaml:"api_key_optional,omitempty"`
 }
 
 // Model represents AI model configuration
@@ -60,12 +109,13 @@ type Model struct {
 
 // MCPServer represents MCP server configuration
 type MCPServer struct {
+	// Type must be exactly stdio, sse, or streamable_http; it has no default.
 	Type string `yaml:"type"`
 	// for stdio
 	Cmd  string            `yaml:"cmd,omitempty"`
 	Args []string          `yaml:"args,omitempty"`
 	Env  map[string]string `yaml:"env,omitempty"`
-	// for sse & streamable-http
+	// for sse & streamable_http
 	URL     string            `yaml:"url,omitempty"`
 	Headers map[string]string `yaml:"headers,omitempty"`
 }
@@ -75,11 +125,12 @@ type Tool struct {
 	Type        string           `yaml:"type"`
 	Description string           `yaml:"description,omitempty"`
 	Config      map[string]Value `yaml:"config,omitempty"`
-	Params      []ToolParam      `yaml:"params,omitempty"`
+	Parameters  []ToolParameter  `yaml:"parameters,omitempty"`
+	PluginTool  *plugins.Tool    `yaml:"-"`
 }
 
-// ToolParam represents tool parameter configuration
-type ToolParam struct {
+// ToolParameter represents tool parameter configuration.
+type ToolParameter struct {
 	Name        string `yaml:"name"`
 	Type        string `yaml:"type"`
 	Description string `yaml:"description,omitempty"`
@@ -88,8 +139,8 @@ type ToolParam struct {
 
 // Settings global settings
 type Settings struct {
-	Langfuse *langfuse.Config `yaml:"langfuse,omitempty"`
-	Approval *ApprovalConfig  `yaml:"approval,omitempty"`
+	Langfuse *LangfuseConfig `yaml:"langfuse,omitempty"`
+	Approval *ApprovalConfig `yaml:"approval,omitempty"`
 }
 
 // ApprovalConfig controls which tool calls must be confirmed by the user in
@@ -160,14 +211,46 @@ func LoadConfig(configPath string) (*Config, error) {
 
 	// Parse YAML
 	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&cfg); err != nil && err != io.EOF {
 		return nil, fmt.Errorf("failed to parse configuration file: %w", err)
+	}
+
+	cfg.SourcePath, err = filepath.Abs(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve configuration path: %w", err)
+	}
+	// Preserve field presence, including explicit false/empty overrides, when
+	// merging YAML settings onto a provider exported by a plugin.
+	var raw struct {
+		Providers map[string]yaml.Node `yaml:"providers"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse provider settings: %w", err)
+	}
+	cfg.providerOverrides = raw.Providers
+
+	if err := cfg.normalizeProviderTypes(); err != nil {
+		return nil, err
+	}
+	for name, server := range cfg.MCPServers {
+		if err := ValidateMCPServerName(name); err != nil {
+			return nil, err
+		}
+		if err := ValidateMCPType(server.Type); err != nil {
+			return nil, fmt.Errorf("MCP server %q: %w", name, err)
+		}
 	}
 
 	// Merge skills defined as markdown files (user and project directories).
 	loadSkillsFromDirs(&cfg)
 
-	// Save to global variable
+	if err := cfg.loadPlugins(context.Background(), configPath); err != nil {
+		return nil, err
+	}
+
+	// Publish only after every plugin has loaded successfully.
 	globalConfig = &cfg
 
 	return &cfg, nil

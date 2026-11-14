@@ -4,10 +4,10 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const REPO = 'tk103331/eino-cli';
-const BINARY = 'eino';
+const REPO = 'tk103331/oni3';
+const BINARY = 'oni3';
 
-const OS_MAP = { darwin: 'darwin', linux: 'linux' };
+const OS_MAP = { darwin: 'darwin', linux: 'linux', win32: 'windows' };
 const ARCH_MAP = { x64: 'amd64', arm64: 'arm64' };
 
 function platformTarget() {
@@ -28,20 +28,23 @@ function vendorDir() {
 }
 
 // assetName mirrors the goreleaser archive naming:
-// eino_<version>_<os>_<arch>.tar.gz.
+// oni3_<version>_<os>_<arch>.tar.gz, and .zip on Windows.
 function assetName(v) {
   const target = platformTarget();
   if (!target) {
     return null;
   }
-  return `${BINARY}_${v}_${target.os}_${target.arch}.tar.gz`;
+  const ext = target.os === 'windows' ? 'zip' : 'tar.gz';
+  return `${BINARY}_${v}_${target.os}_${target.arch}.${ext}`;
 }
 
 function binaryPath() {
-  if (!platformTarget()) {
+  const target = platformTarget();
+  if (!target) {
     return null;
   }
-  return path.join(vendorDir(), BINARY);
+  const name = target.os === 'windows' ? `${BINARY}.exe` : BINARY;
+  return path.join(vendorDir(), name);
 }
 
 function download(url, dest) {
@@ -62,9 +65,28 @@ function download(url, dest) {
 }
 
 function extract(archive, dir) {
+  if (archive.endsWith('.zip')) {
+    // Windows: bsdtar ships with Windows 10 1803+ and reads zip archives.
+    // PowerShell's Expand-Archive is the fallback for older systems.
+    try {
+      execFileSync('tar', ['-xf', archive, '-C', dir], { stdio: 'ignore' });
+      return;
+    } catch (tarErr) {
+      try {
+        execFileSync(
+          'powershell',
+          ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${dir}' -Force`],
+          { stdio: 'ignore' }
+        );
+        return;
+      } catch (psErr) {
+        throw new Error(`failed to extract ${archive} (tar and PowerShell unavailable): ${psErr.message}`);
+      }
+    }
+  }
   try {
     // Only unpack the binary; the archive also carries the docs.
-    execFileSync('tar', ['-xzf', archive, '-C', dir, BINARY], { stdio: 'ignore' });
+    execFileSync('tar', ['-xzf', archive, '-C', dir], { stdio: 'ignore' });
   } catch (err) {
     throw new Error(`failed to extract ${archive} (tar unavailable): ${err.message}`);
   }

@@ -10,17 +10,17 @@ import (
 	"testing"
 
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 	"gopkg.in/yaml.v3"
 )
 
-// newFSTestTool builds a filesystem tool rooted at root. extra lines are
+// newFSTestTool builds a file_system tool rooted at root. extra lines are
 // additional YAML keys under `config:`.
 func newFSTestTool(t *testing.T, root string, extra ...string) tool.InvokableTool {
 	t.Helper()
 
 	var b strings.Builder
-	b.WriteString("type: filesystem\nconfig:\n  root: " + strconv.Quote(root) + "\n")
+	b.WriteString("type: file_system\nconfig:\n  root: " + strconv.Quote(root) + "\n")
 	for _, line := range extra {
 		b.WriteString(line + "\n")
 	}
@@ -29,7 +29,7 @@ func newFSTestTool(t *testing.T, root string, extra ...string) tool.InvokableToo
 	if err := yaml.Unmarshal([]byte(b.String()), &cfg); err != nil {
 		t.Fatalf("cannot parse test config: %v", err)
 	}
-	tl, err := NewFileSystemTool("filesystem", cfg)
+	tl, err := NewFileSystemTool("file_system", cfg)
 	if err != nil {
 		t.Fatalf("NewFileSystemTool: %v", err)
 	}
@@ -279,9 +279,9 @@ func TestFileSystemArgumentErrors(t *testing.T) {
 }
 
 func TestFileSystemFactoryRegistration(t *testing.T) {
-	tl, err := CreateTool("fs", config.Tool{Type: "filesystem"})
+	tl, err := CreateTool("fs", config.Tool{Type: "file_system"})
 	if err != nil {
-		t.Fatalf("filesystem type not registered: %v", err)
+		t.Fatalf("file_system type not registered: %v", err)
 	}
 	info, err := tl.Info(context.Background())
 	if err != nil {

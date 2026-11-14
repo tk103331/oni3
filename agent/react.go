@@ -8,20 +8,20 @@ import (
 	"io"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/cloudwego/eino/callbacks"
+	"github.com/cloudwego/eino/components"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/flow/agent"
 	"github.com/cloudwego/eino/flow/agent/react"
 	"github.com/cloudwego/eino/schema"
-	"github.com/tk103331/eino-cli/config"
-	"github.com/tk103331/eino-cli/logger"
-	"github.com/tk103331/eino-cli/mcp"
-	"github.com/tk103331/eino-cli/models"
-	"github.com/tk103331/eino-cli/tools"
+	"github.com/tk103331/oni3/config"
+	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/mcp"
+	"github.com/tk103331/oni3/models"
+	"github.com/tk103331/oni3/tools"
 )
 
 // ReactAgent implements Agent using React pattern from cloudwego/eino library
@@ -59,7 +59,7 @@ func formatArguments(args string) string {
 
 	// Truncate if still too long
 	if len(cleaned) > 300 {
-		return cleaned[:297] + "..."
+		return truncateText(cleaned, 297)
 	}
 
 	return cleaned
@@ -76,7 +76,7 @@ func formatResult(result string) string {
 		if formatted, err := json.MarshalIndent(jsonResult, "   ", "  "); err == nil {
 			formattedStr := string(formatted)
 			if len(formattedStr) > 500 {
-				return formattedStr[:497] + "..."
+				return truncateText(formattedStr, 497)
 			}
 			return formattedStr
 		}
@@ -90,7 +90,7 @@ func formatResult(result string) string {
 
 	// Truncate single line if too long
 	if len(cleaned) > 500 {
-		return cleaned[:497] + "..."
+		return truncateText(cleaned, 497)
 	}
 
 	return cleaned
@@ -133,7 +133,7 @@ func formatGoStruct(structStr string) string {
 
 	formatted := strings.Join(result, ", ")
 	if len(formatted) > 300 {
-		return formatted[:297] + "..."
+		return truncateText(formatted, 297)
 	}
 	return formatted
 }
@@ -164,7 +164,7 @@ func formatMapLike(mapStr string) string {
 	if len(result) > 0 {
 		formatted := "{ " + strings.Join(result, ", ") + " }"
 		if len(formatted) > 300 {
-			return formatted[:297] + "..."
+			return truncateText(formatted, 297)
 		}
 		return formatted
 	}
@@ -173,7 +173,7 @@ func formatMapLike(mapStr string) string {
 	cleaned := regexp.MustCompile(`\s+`).ReplaceAllString(mapStr, " ")
 	cleaned = strings.TrimSpace(cleaned)
 	if len(cleaned) > 300 {
-		return cleaned[:297] + "..."
+		return truncateText(cleaned, 297)
 	}
 	return cleaned
 }
@@ -201,7 +201,7 @@ func formatGeneralInfo(info string) string {
 	cleaned = strings.TrimSpace(cleaned)
 
 	if len(cleaned) > 200 {
-		return cleaned[:197] + "..."
+		return truncateText(cleaned, 197)
 	}
 
 	return cleaned
@@ -278,91 +278,49 @@ func formatToolCalls(info string) string {
 
 // truncateString truncates a string to the specified length
 func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	return truncateText(s, maxLen-3)
+}
+
+// truncateText cuts s to at most max runes and appends an ellipsis. Counting
+// bytes instead would split a multi-byte character, and slicing runes by a
+// byte-derived limit panics when the text holds fewer runes than the limit.
+func truncateText(s string, max int) string {
+	if max < 0 {
+		max = 0
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
 		return s
 	}
-	return s[:maxLen-3] + "..."
-}
-
-// looksLikeWeatherQuery attempts to identify if the argument looks like a weather query
-func looksLikeWeatherQuery(args string) bool {
-	// Common indicators of weather queries
-	weatherKeywords := []string{
-		"weather", "temperature", "forecast", "climate", "humid", "rain", "snow", "wind",
-		"celsius", "fahrenheit", "°C", "°F", "天气", "气温", "温度", "下雨", "晴天", "阴天",
-	}
-
-	// Chinese city names and common locations
-	locationPatterns := []string{
-		"北京", "上海", "广州", "深圳", "杭州", "南京", "武汉", "成都", "西安", "重庆",
-		"天津", "苏州", "青岛", "大连", "厦门", "Beijing", "Shanghai", "Guangzhou", "Shenzhen",
-	}
-
-	args = strings.ToLower(strings.TrimSpace(args))
-
-	// Check for weather keywords
-	for _, keyword := range weatherKeywords {
-		if strings.Contains(args, strings.ToLower(keyword)) {
-			return true
-		}
-	}
-
-	// Check if it's just a city name (strong indicator for weather)
-	for _, city := range locationPatterns {
-		if strings.Contains(args, strings.ToLower(city)) {
-			return true
-		}
-	}
-
-	// Check if it's a Chinese location (ends with common Chinese location suffixes)
-	if strings.ContainsAny(args, "市省区县") && len(args) >= 2 {
-		return true
-	}
-
-	// Single Chinese characters that are likely locations
-	if len(args) <= 4 && isMostlyChinese(args) {
-		return true
-	}
-
-	return false
-}
-
-// looksLikeLocationQuery attempts to identify if the argument looks like a location query
-func looksLikeLocationQuery(args string) bool {
-	locationKeywords := []string{
-		"location", "address", "coordinate", "gps", "map", "where", "find", "search",
-		"地址", "位置", "坐标", "定位", "查找", "搜索",
-	}
-
-	args = strings.ToLower(strings.TrimSpace(args))
-
-	for _, keyword := range locationKeywords {
-		if strings.Contains(args, strings.ToLower(keyword)) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isMostlyChinese checks if a string contains mostly Chinese characters
-func isMostlyChinese(s string) bool {
-	chineseCount := 0
-	for _, r := range s {
-		if unicode.Is(unicode.Han, r) {
-			chineseCount++
-		}
-	}
-	return len(s) > 0 && chineseCount >= len(s)/2
+	return string(runes[:max]) + "..."
 }
 
 // ToolCallInfo represents structured tool call information
 type ToolCallInfo struct {
 	Type      string // "start", "end", "error"
 	Name      string
+	CallID    string // eino tool call id: pairs a call with its result
 	Arguments string
 	Result    string
 	Error     string
+}
+
+// componentToolsNode is the eino component name of the ReAct tools node. The
+// node announces the tool calls the model requested; the tool node itself
+// announces the execution of one of them.
+const componentToolsNode = "ToolsNode"
+
+// isToolComponent reports whether a callback event belongs to an actual tool
+// execution. Model, tools-node and graph events are internal plumbing and
+// must not be reported as tool calls.
+func isToolComponent(info *callbacks.RunInfo) bool {
+	return info != nil && info.Component == components.ComponentOfTool
+}
+
+// isToolsNode reports whether a callback event belongs to the ReAct tools
+// orchestrator.
+func isToolsNode(info *callbacks.RunInfo) bool {
+	return info != nil && (info.Name == "Tools" || info.Component == componentToolsNode)
 }
 
 // ToolCallCallback custom callback handler for capturing tool call information
@@ -370,110 +328,56 @@ type ToolCallCallback struct {
 	callback func(interface{})
 }
 
+// emit reports one event to the display. A panic in the callback must not
+// abort the agent run: eino turns a panicking handler into a node error, which
+// ended the whole turn on a display bug.
+func (t *ToolCallCallback) emit(info ToolCallInfo) {
+	if t.callback == nil {
+		return
+	}
+	safeCallback(func() { t.callback(info) })
+}
+
+// safeCallback runs a display callback, turning a panic into a logged error.
+func safeCallback(fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("AGENT", fmt.Sprintf("callback panicked: %v", r))
+		}
+	}()
+	fn()
+}
+
 // OnStart callback when node starts
 func (t *ToolCallCallback) OnStart(ctx context.Context, info *callbacks.RunInfo, input callbacks.CallbackInput) context.Context {
-	logger.Debug("AGENT", fmt.Sprintf("Callback OnStart: name=%s, input_type=%T", info.Name, input))
-
-	// Special handling for Tools node to inspect what tools are being called
-	if info.Name == "Tools" {
-		if msg, ok := input.(*schema.Message); ok {
-			logger.Info("AGENT", fmt.Sprintf("Tools node processing message with %d tool calls", len(msg.ToolCalls)))
-			for i, tc := range msg.ToolCalls {
-				logger.Info("AGENT", fmt.Sprintf("Tools node - Tool call #%d: %s", i+1, tc.Function.Name))
-				logger.Debug("AGENT", fmt.Sprintf("Tools node - Tool call #%d struct: %+v", i+1, tc))
-				logger.Debug("AGENT", fmt.Sprintf("Tools node - Tool call #%d ID: %s", i+1, tc.ID))
-				logger.Debug("AGENT", fmt.Sprintf("Tools node - Tool call #%d Function struct: %+v", i+1, tc.Function))
-				if tc.Function.Arguments != "" {
-					logger.Debug("AGENT", fmt.Sprintf("Tools node - Tool call #%d args: %s", i+1, tc.Function.Arguments))
-				}
-
-				// Send individual tool call start callback to UI
-				toolName := tc.Function.Name
-				if toolName == "" {
-					// Try to extract tool name from ID or arguments as fallback
-					if tc.ID != "" {
-						toolName = tc.ID
-						logger.Debug("AGENT", fmt.Sprintf("Using ID as tool name fallback: %s", toolName))
-					} else if tc.Function.Arguments != "" {
-						// Try to parse arguments as JSON to see if tool name is embedded
-						var argsMap map[string]interface{}
-						if err := json.Unmarshal([]byte(tc.Function.Arguments), &argsMap); err == nil {
-							// Look for common tool name fields
-							if name, ok := argsMap["name"].(string); ok && name != "" {
-								toolName = name
-								logger.Debug("AGENT", fmt.Sprintf("Extracted tool name from arguments: %s", toolName))
-							} else if tool, ok := argsMap["tool"].(string); ok && tool != "" {
-								toolName = tool
-								logger.Debug("AGENT", fmt.Sprintf("Extracted tool from arguments: %s", toolName))
-							} else if funcName, ok := argsMap["function_name"].(string); ok && funcName != "" {
-								toolName = funcName
-								logger.Debug("AGENT", fmt.Sprintf("Extracted function_name from arguments: %s", toolName))
-							} else if funcName, ok := argsMap["function"].(string); ok && funcName != "" {
-								toolName = funcName
-								logger.Debug("AGENT", fmt.Sprintf("Extracted function from arguments: %s", toolName))
-							} else {
-								// Check if there's a nested structure
-								if nested, ok := argsMap["function"].(map[string]interface{}); ok {
-									if name, ok := nested["name"].(string); ok && name != "" {
-										toolName = name
-										logger.Debug("AGENT", fmt.Sprintf("Extracted nested function name: %s", toolName))
-									}
-								}
-								if toolName == "" {
-									toolName = "unknown_tool"
-									logger.Warn("AGENT", "Tool name is empty and couldn't extract from arguments")
-								}
-							}
-						} else {
-							// Arguments are not valid JSON, try to infer from context
-							argsStr := tc.Function.Arguments
-							logger.Debug("AGENT", fmt.Sprintf("Arguments are not JSON, raw content: %s", argsStr))
-
-							// Check if this looks like a weather query (city name, location, etc.)
-							if looksLikeWeatherQuery(argsStr) {
-								toolName = "get_weather"
-								logger.Info("AGENT", "Inferred 'get_weather' from weather-like query")
-							} else if looksLikeLocationQuery(argsStr) {
-								toolName = "get_location"
-								logger.Info("AGENT", "Inferred 'get_location' from location-like query")
-							} else {
-								toolName = "unknown_tool"
-								logger.Warn("AGENT", "Tool name is empty and couldn't infer from arguments")
-							}
-						}
-					} else {
-						toolName = "unknown_tool"
-						logger.Warn("AGENT", "Tool name is empty, using 'unknown_tool' fallback")
-					}
-				}
-
-				if t.callback != nil && toolName != "" {
-					logger.Debug("AGENT", fmt.Sprintf("Sending individual tool start callback for: %s", toolName))
-					t.callback(ToolCallInfo{
-						Type:      "start",
-						Name:      toolName,
-						Arguments: tc.Function.Arguments,
-					})
-				}
-			}
-		} else {
-			logger.Debug("AGENT", fmt.Sprintf("Tools node received input type: %T", input))
-		}
+	if t.callback == nil || info == nil {
+		return ctx
 	}
 
-	if t.callback != nil && info.Name != "" {
-		// Format arguments for better readability
-		args := fmt.Sprintf("%v", input)
-		if len(args) > 200 {
-			args = args[:197] + "..."
+	// The tools node announces every tool call the model requested, together
+	// with the raw arguments and the tool call id. The tool node re-announces
+	// the same call when it starts executing, so only the tools node is
+	// reported here - reporting both produced a duplicate row per call.
+	if !isToolsNode(info) {
+		return ctx
+	}
+	msg, ok := input.(*schema.Message)
+	if !ok {
+		logger.Debug("AGENT", fmt.Sprintf("Tools node received input type: %T", input))
+		return ctx
+	}
+	for _, tc := range msg.ToolCalls {
+		name := strings.TrimSpace(tc.Function.Name)
+		if name == "" {
+			logger.Warn("AGENT", "Tool call without a name is ignored")
+			continue
 		}
-
-		logger.Debug("AGENT", fmt.Sprintf("Sending callback for %s start", info.Name))
-		// Send structured tool start information
-		t.callback(ToolCallInfo{
+		logger.Debug("AGENT", fmt.Sprintf("Tool call %s: %s", tc.ID, name))
+		t.emit(ToolCallInfo{
 			Type:      "start",
-			Name:      info.Name,
-			Arguments: args,
+			Name:      name,
+			CallID:    tc.ID,
+			Arguments: tc.Function.Arguments,
 		})
 	}
 	return ctx
@@ -481,51 +385,43 @@ func (t *ToolCallCallback) OnStart(ctx context.Context, info *callbacks.RunInfo,
 
 // OnEnd callback when node ends
 func (t *ToolCallCallback) OnEnd(ctx context.Context, info *callbacks.RunInfo, output callbacks.CallbackOutput) context.Context {
-	logger.Debug("AGENT", fmt.Sprintf("Callback OnEnd: name=%s, output_type=%T", info.Name, output))
-
-	// Special handling for Tools node - log completion but don't send generic callback
-	// Individual tool results will be handled through the streaming process or separate callbacks
-	if info.Name == "Tools" {
-		if msg, ok := output.(*schema.Message); ok {
-			logger.Info("AGENT", fmt.Sprintf("Tools node completed processing"))
-			logger.Debug("AGENT", fmt.Sprintf("Tools node output type: %T, content_len: %d",
-				output, len(msg.Content)))
-		} else {
-			logger.Debug("AGENT", fmt.Sprintf("Tools node output type: %T", output))
-		}
-		// Don't send the generic "Tools" completion callback to avoid cluttering the UI
-		// Individual tool callbacks are sent from the OnStart method
+	if t.callback == nil || !isToolComponent(info) {
 		return ctx
 	}
 
-	if t.callback != nil && info.Name != "" {
-		// Format result for better readability
-		result := fmt.Sprintf("%v", output)
-		if len(result) > 200 {
-			result = result[:197] + "..."
-		}
-
-		logger.Debug("AGENT", fmt.Sprintf("Sending callback for %s end", info.Name))
-		// Send structured tool completion information
-		t.callback(ToolCallInfo{
-			Type:   "end",
-			Name:   info.Name,
-			Result: result,
-		})
+	result := ""
+	switch v := output.(type) {
+	case string:
+		result = v
+	case *tool.CallbackOutput:
+		result = v.Response
+	default:
+		result = fmt.Sprintf("%v", output)
 	}
+	result = truncateText(result, 197)
+
+	logger.Debug("AGENT", fmt.Sprintf("Tool %s finished", info.Name))
+	t.emit(ToolCallInfo{
+		Type:   "end",
+		Name:   info.Name,
+		CallID: compose.GetToolCallID(ctx),
+		Result: result,
+	})
 	return ctx
 }
 
 // OnError callback when node encounters error
 func (t *ToolCallCallback) OnError(ctx context.Context, info *callbacks.RunInfo, err error) context.Context {
-	if t.callback != nil && info.Name != "" {
-		// Send structured error information
-		t.callback(ToolCallInfo{
-			Type:  "error",
-			Name:  info.Name,
-			Error: err.Error(),
-		})
+	if t.callback == nil || !isToolComponent(info) || err == nil {
+		return ctx
 	}
+	logger.Debug("AGENT", fmt.Sprintf("Tool %s failed: %v", info.Name, err))
+	t.emit(ToolCallInfo{
+		Type:   "error",
+		Name:   info.Name,
+		CallID: compose.GetToolCallID(ctx),
+		Error:  err.Error(),
+	})
 	return ctx
 }
 
@@ -564,8 +460,10 @@ func (r *ReactAgent) Init() error {
 
 	// Create Agent configuration
 	agentConfig := &react.AgentConfig{
-		ToolCallingModel: model,
-		ToolsConfig:      toolsConfig,
+		ToolCallingModel:      model,
+		ToolsConfig:           toolsConfig,
+		MaxStep:               r.maxSteps(),
+		StreamToolCallChecker: streamHasToolCalls,
 	}
 
 	// Create Agent
@@ -579,12 +477,43 @@ func (r *ReactAgent) Init() error {
 	return nil
 }
 
+// streamHasToolCalls allows models to explain their next action before emitting
+// tool calls. Eino's default checker stops at the first non-empty content chunk,
+// which can end a turn before a later tool call is executed.
+func streamHasToolCalls(ctx context.Context, stream *schema.StreamReader[*schema.Message]) (bool, error) {
+	defer stream.Close()
+	for {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		msg, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if msg != nil && len(msg.ToolCalls) > 0 {
+			return true, nil
+		}
+	}
+}
+
+// maxSteps returns the ReAct loop cap: the agent's max_steps when set,
+// otherwise config.DefaultMaxSteps.
+func (r *ReactAgent) maxSteps() int {
+	if r.config != nil && r.config.MaxSteps > 0 {
+		return r.config.MaxSteps
+	}
+	return config.DefaultMaxSteps
+}
+
 // buildMessages assembles the system prompt, the prior conversation turns and
 // the current user prompt into the message list for one model call.
 func (r *ReactAgent) buildMessages(history []*schema.Message, prompt string) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(history)+2)
-	if strings.TrimSpace(r.config.System) != "" {
-		messages = append(messages, schema.SystemMessage(r.config.System))
+	if system := r.systemPrompt(config.GetConfig()); system != "" {
+		messages = append(messages, schema.SystemMessage(system))
 	}
 	for _, msg := range history {
 		if msg != nil {
@@ -630,34 +559,19 @@ func (r *ReactAgent) Run(prompt string) error {
 		case ToolCallInfo:
 			switch info.Type {
 			case "start":
-				// Handle different node types with specialized formatting
-				if info.Name == "ChatModel" {
-					fmt.Printf("   🤖 Processing with ChatModel\n")
-				} else if info.Name == "Tools" {
-					fmt.Printf("   🔧 Processing tool calls\n")
-				} else {
-					// Regular tool calls
-					fmt.Printf("   📋 %s\n", info.Name)
-					if info.Arguments != "" {
-						// Format arguments for better readability
-						formattedArgs := formatArguments(info.Arguments)
-						fmt.Printf("   📝 Arguments: %s\n", formattedArgs)
-					}
+				fmt.Printf("   📋 %s\n", info.Name)
+				if info.Arguments != "" {
+					// Format arguments for better readability
+					formattedArgs := formatArguments(info.Arguments)
+					fmt.Printf("   📝 Arguments: %s\n", formattedArgs)
 				}
 			case "end":
-				if info.Name == "ChatModel" {
-					fmt.Printf("   ✅ ChatModel response generated\n")
-				} else if info.Name == "Tools" {
-					fmt.Printf("   ✅ Tool calls processed\n")
+				if info.Result != "" {
+					// Format result for better readability
+					formattedResult := formatResult(info.Result)
+					fmt.Printf("   📊 Result: %s\n", formattedResult)
 				} else {
-					// Regular tool results
-					if info.Result != "" {
-						// Format result for better readability
-						formattedResult := formatResult(info.Result)
-						fmt.Printf("   📊 Result: %s\n", formattedResult)
-					} else {
-						fmt.Printf("   ✅ Completed successfully\n")
-					}
+					fmt.Printf("   ✅ Completed successfully\n")
 				}
 			case "error":
 				fmt.Printf("   ❌ Error: %s\n", info.Error)
@@ -673,7 +587,7 @@ func (r *ReactAgent) Run(prompt string) error {
 }
 
 // Chat performs conversation, returns response content
-func (r *ReactAgent) Chat(ctx context.Context, history []*schema.Message, prompt string) (string, error) {
+func (r *ReactAgent) Chat(ctx context.Context, history []*schema.Message, prompt string) (output string, retErr error) {
 	if r.agent == nil {
 		if err := r.Init(); err != nil {
 			return "", err
@@ -683,6 +597,11 @@ func (r *ReactAgent) Chat(ctx context.Context, history []*schema.Message, prompt
 	// Create messages
 	messages := r.buildMessages(history, prompt)
 	ctx = r.withActiveModel(ctx)
+	finish, hookErr := r.startPluginHooks(ctx, prompt)
+	if hookErr != nil {
+		return "", hookErr
+	}
+	defer func() { retErr = finish(output, retErr) }()
 
 	// Use Generate method for synchronous call
 	response, err := r.agent.Generate(ctx, messages)
@@ -694,7 +613,7 @@ func (r *ReactAgent) Chat(ctx context.Context, history []*schema.Message, prompt
 }
 
 // ChatWithCallback performs conversation with streaming output and callback support
-func (r *ReactAgent) ChatWithCallback(ctx context.Context, history []*schema.Message, prompt string, callback func(interface{})) (string, error) {
+func (r *ReactAgent) ChatWithCallback(ctx context.Context, history []*schema.Message, prompt string, callback func(interface{})) (output string, retErr error) {
 	if r.agent == nil {
 		if err := r.Init(); err != nil {
 			return "", err
@@ -704,6 +623,11 @@ func (r *ReactAgent) ChatWithCallback(ctx context.Context, history []*schema.Mes
 	// Create messages
 	messages := r.buildMessages(history, prompt)
 	ctx = r.withActiveModel(ctx)
+	finish, hookErr := r.startPluginHooks(ctx, prompt)
+	if hookErr != nil {
+		return "", hookErr
+	}
+	defer func() { retErr = finish(output, retErr) }()
 
 	// If no callback function, use Generate method directly
 	if callback == nil {
@@ -713,6 +637,10 @@ func (r *ReactAgent) ChatWithCallback(ctx context.Context, history []*schema.Mes
 		}
 		return response.Content, nil
 	}
+
+	// A display callback must never abort the run.
+	display := callback
+	callback = func(msg interface{}) { safeCallback(func() { display(msg) }) }
 
 	// Create tool call callback handler
 	toolCallback := &ToolCallCallback{callback: callback}
@@ -763,7 +691,7 @@ func (r *ReactAgent) ChatWithCallback(ctx context.Context, history []*schema.Mes
 }
 
 // ChatStream performs streaming conversation, handles streaming output via chunk callback
-func (r *ReactAgent) ChatStream(ctx context.Context, history []*schema.Message, prompt string, chunkCallback func(*StreamChunk), toolCallback func(interface{})) error {
+func (r *ReactAgent) ChatStream(ctx context.Context, history []*schema.Message, prompt string, chunkCallback func(*StreamChunk), toolCallback func(interface{})) (retErr error) {
 	if r.agent == nil {
 		if err := r.Init(); err != nil {
 			return err
@@ -773,11 +701,23 @@ func (r *ReactAgent) ChatStream(ctx context.Context, history []*schema.Message, 
 	// Create messages
 	messages := r.buildMessages(history, prompt)
 	ctx = r.withActiveModel(ctx)
+	finish, hookErr := r.startPluginHooks(ctx, prompt)
+	if hookErr != nil {
+		return hookErr
+	}
+	var hookOutput strings.Builder
+	collectHookOutput := config.GetConfig().HasPluginHook("after_agent")
+	defer func() { retErr = finish(hookOutput.String(), retErr) }()
 
 	// Log the messages for debugging
 	logger.Info("AGENT", "Starting ChatStream with messages:")
 	logger.Debug("AGENT", fmt.Sprintf("System prompt: %s", r.config.System))
 	logger.Debug("AGENT", fmt.Sprintf("User prompt: %s", prompt))
+
+	if chunkCallback != nil {
+		display := chunkCallback
+		chunkCallback = func(chunk *StreamChunk) { safeCallback(func() { display(chunk) }) }
+	}
 
 	// Create tool call callback handler
 	var toolCallCallback *ToolCallCallback
@@ -849,6 +789,9 @@ func (r *ReactAgent) ChatStream(ctx context.Context, history []*schema.Message, 
 			return fmt.Errorf("failed to receive stream message: %w", err)
 		}
 
+		if collectHookOutput {
+			hookOutput.WriteString(msg.Content)
+		}
 		messageCount++
 		logger.Debug("AGENT", fmt.Sprintf("Received message #%d: role=%s, tool_calls=%d, content_len=%d",
 			messageCount, msg.Role, len(msg.ToolCalls), len(msg.Content)))
@@ -897,9 +840,10 @@ func (r *ReactAgent) ChatStream(ctx context.Context, history []*schema.Message, 
 	return nil
 }
 
-// withActiveModel annotates ctx with the model this agent runs, so nested
-// agents (the subagent tool) inherit the current model — including a runtime
-// /model switch, which is already folded into r.config by the caller.
+// withActiveModel annotates ctx with the model and tools this agent runs, so
+// nested agents (the subagent tool) inherit the current capabilities —
+// including a runtime /model switch, which is already folded into r.config by
+// the caller.
 func (r *ReactAgent) withActiveModel(ctx context.Context) context.Context {
 	name := r.config.Model
 	if name == "" {
@@ -907,7 +851,8 @@ func (r *ReactAgent) withActiveModel(ctx context.Context) context.Context {
 			name = cfg.DefaultModelName()
 		}
 	}
-	return tools.WithActiveModel(ctx, name)
+	ctx = tools.WithActiveModel(ctx, name)
+	return tools.WithActiveTools(ctx, r.config.Tools)
 }
 
 // createModel creates model
@@ -1000,12 +945,20 @@ func (r *ReactAgent) createToolsConfig() (compose.ToolsNodeConfig, error) {
 		logger.Info("AGENT", "No MCP servers configured")
 	}
 
+	if err := validateToolNames(r.ctx, toolsConfig.Tools); err != nil {
+		return toolsConfig, err
+	}
+
 	// Wrap every tool (built-in and MCP) with the approval policy.
 	wrapped, err := wrapApprovals(toolsConfig.Tools)
 	if err != nil {
 		return toolsConfig, err
 	}
 	toolsConfig.Tools = wrapped
+
+	// A failing tool must not end the turn: the failure is reported back to
+	// the model as a result so it can try something else.
+	toolsConfig.Tools = wrapRecoverable(r.wrapPluginHooks(toolsConfig.Tools))
 
 	logger.Info("AGENT", fmt.Sprintf("Total tools available: %d", len(toolsConfig.Tools)))
 	return toolsConfig, nil

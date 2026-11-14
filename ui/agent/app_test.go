@@ -9,12 +9,12 @@ import (
 
 func TestHeaderLabel(t *testing.T) {
 	cases := []struct{ agent, model, want string }{
-		{"Eino", "gpt4", "Eino · gpt4"},
-		{"Eino", "", "Eino"},
+		{"OniThree", "gpt4", "OniThree · gpt4"},
+		{"OniThree", "", "OniThree"},
 		{"", "gpt4", "gpt4"},
 		{"", "", ""},
-		{"Eino", "Eino", "Eino"},
-		{" Eino ", " gpt4 ", "Eino · gpt4"},
+		{"OniThree", "OniThree", "OniThree"},
+		{" OniThree ", " gpt4 ", "OniThree · gpt4"},
 	}
 	for _, c := range cases {
 		if got := headerLabel(c.agent, c.model); got != c.want {
@@ -26,10 +26,10 @@ func TestHeaderLabel(t *testing.T) {
 func TestHeaderShowsSubtitle(t *testing.T) {
 	m := NewViewModel(func(string) error { return nil })
 	m = drive(m, tea.WindowSizeMsg{Width: 90, Height: 20})
-	m.SetSubtitle(headerLabel("Eino", "gpt4"))
+	m.SetSubtitle(headerLabel("OniThree", "gpt4"))
 
 	out := m.View()
-	if !strings.Contains(out, "Eino · gpt4") {
+	if !strings.Contains(out, "OniThree · gpt4") {
 		t.Fatalf("header missing agent/model subtitle:\n%s", out)
 	}
 }

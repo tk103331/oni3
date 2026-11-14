@@ -12,7 +12,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/qianfan"
 	"github.com/cloudwego/eino-ext/components/model/qwen"
 	"github.com/cloudwego/eino/components/model"
-	"github.com/tk103331/eino-cli/config"
+	"github.com/tk103331/oni3/config"
 )
 
 // createOpenAIModel creates OpenAI model
@@ -38,8 +38,8 @@ func (f *Factory) createOpenAIModel(ctx context.Context, modelCfg *config.Model,
 	return openai.NewChatModel(ctx, cfg)
 }
 
-// createClaudeModel creates Claude model
-func (f *Factory) createClaudeModel(ctx context.Context, modelCfg *config.Model, providerCfg *config.Provider) (model.ToolCallingChatModel, error) {
+// createAnthropicModel creates an Anthropic model using Eino's claude SDK.
+func (f *Factory) createAnthropicModel(ctx context.Context, modelCfg *config.Model, providerCfg *config.Provider) (model.ToolCallingChatModel, error) {
 	cfg := &claude.Config{
 		Model:   modelCfg.Model,
 		BaseURL: &(providerCfg.BaseURL),
