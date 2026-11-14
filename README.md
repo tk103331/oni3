@@ -40,6 +40,13 @@ oni3
 brew install tk103331/tap/oni3   # provides the `oni3` command
 ```
 
+**Scoop** (Windows):
+
+```powershell
+scoop bucket add oni3 https://github.com/tk103331/scoop-bucket
+scoop install oni3   # provides the `oni3` command
+```
+
 **Releasing (maintainers)**:
 
 ```bash
@@ -50,6 +57,7 @@ GitHub Actions (`.github/workflows/release.yml`) will:
 1. build the `oni3` binary for darwin/linux/windows × amd64/arm64 with goreleaser, pack it as `oni3_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows) (~15 MB instead of the ~50 MB stripped binary) and create a Release
 2. publish the npm package via OIDC when the repository variable `NPM_TRUSTED_PUBLISHING=true` is set and the npm package has a GitHub Actions trusted publisher (version taken from the tag, no token needed)
 3. update the `tk103331/homebrew-tap` formula when the `TAP_GITHUB_TOKEN` secret is configured
+4. update the `tk103331/scoop-bucket` manifest when a Scoop token (or the tap token) is available
 
 Preparation before the first release:
 - npm automation token -> repo secret `NPM_TOKEN`

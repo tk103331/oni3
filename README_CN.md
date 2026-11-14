@@ -40,6 +40,13 @@ oni3
 brew install tk103331/tap/oni3   # 提供 oni3 命令
 ```
 
+**Scoop**（Windows）：
+
+```powershell
+scoop bucket add oni3 https://github.com/tk103331/scoop-bucket
+scoop install oni3   # 提供 oni3 命令
+```
+
 **发布（维护者）**：
 
 ```bash
@@ -50,6 +57,7 @@ GitHub Actions（`.github/workflows/release.yml`）会自动完成：
 1. goreleaser 构建 darwin/linux/windows × amd64/arm64 的 `oni3` 二进制，打包为 `oni3_<version>_<os>_<arch>.tar.gz`（Windows 为 `.zip`）（约 15 MB，未压缩的 stripped 二进制约 50 MB）并创建 Release
 2. 配置了仓库变量 `NPM_TRUSTED_PUBLISHING=true`（且 npm 包已配置 Trusted Publisher）时，通过 OIDC 发布 npm 包（版本号取自 tag，无需任何 token）
 3. 配置了 `TAP_GITHUB_TOKEN` secret 时更新 `tk103331/homebrew-tap` 的 formula
+4. 有 Scoop token（或复用 tap token）时更新 `tk103331/scoop-bucket` 的 manifest
 
 首次发布前需要准备：
 - npm Automation token → 仓库 secret `NPM_TOKEN`
