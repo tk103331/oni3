@@ -43,6 +43,13 @@ cp "${workdir}/oni3.rb" "${workdir}/tap/Formula/oni3.rb"
 cd "${workdir}/tap"
 git config user.name "github-actions[bot]"
 git config user.email "github-actions[bot]@users.noreply.github.com"
+
+# Drop the formula of the previous product name so the tap only serves oni3.
+LEGACY_FORMULA="Formula/eino-cli.rb"
+if [ -f "${LEGACY_FORMULA}" ]; then
+  git rm -q "${LEGACY_FORMULA}"
+fi
+
 git add Formula/oni3.rb
 if git diff --cached --quiet; then
   echo "formula unchanged for ${VERSION_NO_V}"
