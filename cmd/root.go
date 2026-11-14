@@ -56,6 +56,17 @@ The same directory can be given with --cwd/-C.`,
 			return err
 		}
 
+		// Create a starter configuration on the first run, so a fresh install
+		// opens the interface instead of failing on a missing file.
+		created, err := config.EnsureConfigFile(configPath)
+		if err != nil {
+			return fmt.Errorf("failed to prepare configuration file: %w", err)
+		}
+		if created {
+			fmt.Fprintf(os.Stderr, "Created a starter configuration at %s\n", configPath)
+			fmt.Fprintln(os.Stderr, "Add a provider there, then run /provider inside Oni3 to enter its API key and import models.")
+		}
+
 		// Load configuration file
 		cfg, err := config.LoadConfig(configPath)
 		if err != nil {

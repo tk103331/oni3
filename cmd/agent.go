@@ -60,7 +60,10 @@ func ensureBuiltinAgent(cfg *config.Config) (string, error) {
 
 	model := cfg.DefaultModelName()
 	if model == "" && len(cfg.Providers) == 0 {
-		return "", fmt.Errorf("没有可用的模型配置：请在 config.yml 添加 providers 或 models")
+		if cfg.SourcePath != "" {
+			return "", fmt.Errorf("没有可用的模型配置：请在 %s 中添加 providers 或 models", cfg.SourcePath)
+		}
+		return "", fmt.Errorf("没有可用的模型配置：请在 config.yml 中添加 providers 或 models")
 	}
 
 	if cfg.Tools == nil {
