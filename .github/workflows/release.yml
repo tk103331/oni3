@@ -74,3 +74,21 @@ jobs:
           TAP_REPO: tk103331/homebrew-tap
           VERSION: ${{ github.ref_name }}
         run: bash scripts/update-tap.sh
+
+  scoop:
+    name: Update Scoop bucket
+    needs: release
+    runs-on: ubuntu-latest
+    env:
+      # Falls back to the tap token when no dedicated Scoop token is set.
+      SCOOP_GITHUB_TOKEN: ${{ secrets.SCOOP_GITHUB_TOKEN || secrets.TAP_GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Scoop manifest
+        if: env.SCOOP_GITHUB_TOKEN != ''
+        env:
+          GH_TOKEN: ${{ env.SCOOP_GITHUB_TOKEN }}
+          BUCKET_REPO: tk103331/scoop-bucket
+          VERSION: ${{ github.ref_name }}
+        run: bash scripts/update-scoop.sh
