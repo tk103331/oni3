@@ -27,6 +27,11 @@ type AgentApp struct {
 	agent         agent.Agent
 	ctx           context.Context
 
+	// mcpDisabled holds MCP servers turned off at runtime via /mcp-off.
+	// The map is only read and written on the UI goroutine, like the other
+	// overrides above.
+	mcpDisabled map[string]bool
+
 	// Tool approvals granted "for this session" (in memory only).
 	approvals approver
 

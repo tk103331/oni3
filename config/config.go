@@ -111,6 +111,9 @@ type Model struct {
 type MCPServer struct {
 	// Type must be exactly stdio, sse, or streamable_http; it has no default.
 	Type string `yaml:"type"`
+	// Description is an optional label shown in the interface (e.g. the /mcp
+	// palette). When it is empty a summary of the endpoint is shown instead.
+	Description string `yaml:"description,omitempty"`
 	// for stdio
 	Cmd  string            `yaml:"cmd,omitempty"`
 	Args []string          `yaml:"args,omitempty"`

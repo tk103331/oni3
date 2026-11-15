@@ -13,6 +13,12 @@ type SlashCommand struct {
 	Args        string   // argument hint, e.g. "<name>" (optional)
 	Description string   // short description shown in the palette
 	Values      []string // optional argument suggestions
+	// ValueLabels optionally annotates each Values entry (same order and
+	// length). The label is appended after the value in the palette.
+	ValueLabels []string
+	// KeepArgs keeps a chosen value in the input box instead of executing,
+	// so the user can continue typing (e.g. "/skill coder " + a message).
+	KeepArgs bool
 }
 
 // CommandResult is returned by a command handler.
@@ -116,11 +122,22 @@ func (m *ViewModel) helpText() string {
 	return b.String()
 }
 
+// containsFold reports whether list contains s, ignoring case and spaces.
+func containsFold(list []string, s string) bool {
+	for _, v := range list {
+		if strings.EqualFold(strings.TrimSpace(v), strings.TrimSpace(s)) {
+			return true
+		}
+	}
+	return false
+}
+
 // paletteItem is one selectable row in the slash command palette.
 type paletteItem struct {
-	line string // rendered row (without the selection marker)
-	fill string // input text applied when chosen (includes leading "/")
-	exec bool   // execute immediately instead of filling the input
+	line     string // rendered row (without the selection marker)
+	fill     string // input text applied when chosen (includes leading "/")
+	exec     bool   // execute immediately instead of filling the input
+	complete bool   // the argument is complete: keep it plus a trailing space
 }
 
 // paletteActive reports whether the palette should be visible at all.
@@ -164,16 +181,26 @@ func (m *ViewModel) paletteItems() []paletteItem {
 		if !strings.EqualFold(c.Name, name) || len(c.Values) == 0 {
 			continue
 		}
+		// A kept argument (KeepArgs) is already complete; typing continues as
+		// a message, so the palette must not offer the same values again.
+		if c.KeepArgs && containsFold(c.Values, argPrefix) {
+			return nil
+		}
 		var items []paletteItem
-		for _, v := range c.Values {
+		for i, v := range c.Values {
 			if argPrefix != "" && !strings.HasPrefix(strings.ToLower(v), strings.ToLower(argPrefix)) {
 				continue
 			}
+			value := v
+			if i < len(c.ValueLabels) && strings.TrimSpace(c.ValueLabels[i]) != "" {
+				value += "  " + c.ValueLabels[i]
+			}
 			items = append(items, paletteItem{
 				line: lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent)).Bold(true).Render("/"+c.Name) +
-					m.muted().Render("  →  "+v),
-				fill: "/" + c.Name + " " + v,
-				exec: true,
+					m.muted().Render("  →  "+value),
+				fill:     "/" + c.Name + " " + v,
+				exec:     !c.KeepArgs,
+				complete: c.KeepArgs,
 			})
 		}
 		return items

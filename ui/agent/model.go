@@ -848,8 +848,15 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, tea.Batch(m.executeSlashCommand(item.fill), m.clampScroll())
 					} else {
 						// Fill the command and continue typing its argument.
-						m.input = item.fill
-						m.cursor = len([]rune(item.fill))
+						// A value kept in the input gets a trailing space so
+						// typing continues right away, and the palette stays
+						// closed because the argument is already complete.
+						fill := item.fill
+						if item.complete {
+							fill += " "
+						}
+						m.input = fill
+						m.cursor = len([]rune(fill))
 						m.paletteSel = 0
 						m.markDirty()
 					}

@@ -70,7 +70,7 @@ Do not lowercase, replace punctuation in, or otherwise rewrite remote model IDs.
 
 Plugin namespaces and local export keys start with a lowercase ASCII letter and contain lowercase letters, digits and underscores. Plugin extensions use `<plugin>__<export-key>`, with a maximum full length of 64 characters. Theme lookup is case-insensitive, while the declared name uses the same lowercase naming convention.
 
-MCP transport types are exactly `stdio`, `sse` and `streamable_http`. Fields such as `url`, `headers`, `cmd`, `args` and `env` belong directly under the server definition:
+MCP transport types are exactly `stdio`, `sse` and `streamable_http`. Fields such as `url`, `headers`, `cmd`, `args`, `env` and the optional display-only `description` belong directly under the server definition:
 
 ```yaml
 mcp_servers:
