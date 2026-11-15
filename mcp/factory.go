@@ -83,6 +83,18 @@ func (m *Manager) GetAllTools() map[string]tool.InvokableTool {
 	return m.client.GetTools()
 }
 
+// ToolCountsByServer returns the number of discovered tools per server. It
+// reports an empty map when the manager has not been initialized.
+func (m *Manager) ToolCountsByServer() map[string]int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.client == nil {
+		return map[string]int{}
+	}
+	return m.client.ToolCountsByServer()
+}
+
 // Close closes the MCP manager
 func (m *Manager) Close() error {
 	m.mu.Lock()

@@ -87,6 +87,18 @@ func (c *Client) GetToolsForServers(serverNames []string) map[string]tool.Invoka
 	return tools
 }
 
+// ToolCountsByServer returns the number of discovered tools per server.
+func (c *Client) ToolCountsByServer() map[string]int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	counts := make(map[string]int)
+	for _, owner := range c.toolServers {
+		counts[owner]++
+	}
+	return counts
+}
+
 // Close closes all MCP client connections
 func (c *Client) Close() error {
 	c.mu.Lock()

@@ -105,6 +105,7 @@ type ViewModel struct {
 	todosCollapsed bool
 	question       *questionState
 	provider       *providerState
+	mcpPanelState  *mcpPanel
 
 	// Efficient line-based rendering cache: rebuilt only when content
 	// changes (dirty) and at most once per renderInterval while streaming.
@@ -692,6 +693,11 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.provider != nil {
 			return m, m.handleProviderKey(msg)
+		}
+
+		// The MCP panel owns the keyboard like the provider modal.
+		if m.mcpPanelState != nil {
+			return m, m.handleMCPPanelKey(msg)
 		}
 
 		// A pending ask_user question owns the keyboard: arrows pick an
@@ -1745,6 +1751,9 @@ func (m *ViewModel) questionPanelLines() []string {
 	if m.provider != nil {
 		return m.providerPanelLines()
 	}
+	if m.mcpPanelState != nil {
+		return m.mcpPanelLines()
+	}
 	q := m.question
 	if q == nil {
 		return nil
@@ -1825,6 +1834,9 @@ func (m *ViewModel) View() string {
 	if m.provider != nil {
 		statusText = "provider"
 		statusDot = m.theme.Accent
+	} else if m.mcpPanelState != nil {
+		statusText = "mcp"
+		statusDot = m.theme.Accent
 	} else if m.question != nil {
 		statusText = "question"
 		statusDot = m.theme.Accent
@@ -1858,6 +1870,8 @@ func (m *ViewModel) View() string {
 	var inputLine string
 	if m.confirmQuit {
 		inputLine = m.warningStyle(true).Render("⚠ 再按一次 Ctrl+C 退出（任意其他键取消）")
+	} else if m.mcpPanelState != nil {
+		inputLine = m.muted().Render("MCP 服务管理 · ↑↓ 选择 · Enter 切换 · Esc 关闭")
 	} else if m.provider != nil {
 		inputLine = m.primaryStyle(true).Render("❯") + " " + m.renderEditableInput()
 		if m.provider.stage == providerLoading {
@@ -1902,6 +1916,8 @@ func (m *ViewModel) View() string {
 		if m.provider.stage == providerKey {
 			helpText = "API Key · enter confirm · esc cancel"
 		}
+	} else if m.mcpPanelState != nil {
+		helpText = "↑↓ select · enter toggle · esc close"
 	} else if m.question != nil {
 		helpText = "↑↓ select · enter answer · esc cancel"
 	} else if m.hasPalette() {

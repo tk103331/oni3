@@ -2,10 +2,10 @@ package agent
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tk103331/oni3/config"
 	"gopkg.in/yaml.v3"
 )
@@ -28,9 +28,13 @@ func mcpTestApp(t *testing.T, agentServers []string) (*AgentApp, *config.Config)
 	if previous == nil {
 		previous = &config.Config{}
 	}
-	restore := filepath.Join(t.TempDir(), "restore.yml")
-	if data, err := marshalConfig(previous); err == nil {
-		_ = writeFile(restore, data)
+	before, err := marshalConfig(previous)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := dir + "/restore.yml"
+	if err := writeFile(restore, before); err != nil {
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = config.LoadConfig(restore) })
 
@@ -45,7 +49,7 @@ func mcpTestApp(t *testing.T, agentServers []string) (*AgentApp, *config.Config)
 	cfg.MCPServers["filesystem"] = config.MCPServer{Type: "stdio", Cmd: "npx fs", Description: "文件系统"}
 	cfg.MCPServers["grep"] = config.MCPServer{Type: "streamable_http", URL: "https://mcp.grep.app"}
 
-	filename := filepath.Join(dir, "fixture.yml")
+	filename := dir + "/fixture.yml"
 	data, err := marshalConfig(&cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -60,17 +64,18 @@ func mcpTestApp(t *testing.T, agentServers []string) (*AgentApp, *config.Config)
 	if err != nil {
 		t.Fatal(err)
 	}
+	app.model.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
 	return app, &cfg
 }
 
-func TestMCPToggleCommand(t *testing.T) {
+func TestMCPEnableDisableCommand(t *testing.T) {
 	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
 
 	// Disabling a referenced server drops it from the effective config and
 	// reports the change.
-	res := app.executeSlash("mcp-off grep")
+	res := app.executeSlash("mcp disable grep")
 	if res.Error {
-		t.Fatalf("mcp-off failed: %s", res.Message)
+		t.Fatalf("mcp disable failed: %s", res.Message)
 	}
 	if !strings.Contains(res.Message, "已禁用") || !strings.Contains(res.Message, "grep") {
 		t.Fatalf("message = %q", res.Message)
@@ -87,47 +92,131 @@ func TestMCPToggleCommand(t *testing.T) {
 	}
 
 	// Re-enabling restores it.
-	res = app.executeSlash("mcp grep")
+	res = app.executeSlash("mcp enable grep")
 	if res.Error {
-		t.Fatalf("mcp failed: %s", res.Message)
+		t.Fatalf("mcp enable failed: %s", res.Message)
 	}
 	ac, _ = app.effectiveAgentConfig()
 	if !containsString(ac.MCPServers, "grep") {
 		t.Fatalf("grep should be enabled again: %v", ac.MCPServers)
 	}
 
+	// Toggling to the same state is a no-op message, not an error.
+	res = app.executeSlash("mcp enable grep")
+	if res.Error || !strings.Contains(res.Message, "已是") {
+		t.Fatalf("idempotent message = %q", res.Message)
+	}
+
 	// Unknown server.
-	res = app.executeSlash("mcp nope")
+	res = app.executeSlash("mcp enable nope")
 	if !res.Error {
 		t.Fatal("unknown MCP server should be an error")
 	}
 
-	// No argument lists the servers with their state.
-	res = app.executeSlash("mcp-off")
-	if !res.Error || !strings.Contains(res.Message, "filesystem") || !strings.Contains(res.Message, "文件系统") {
-		t.Fatalf("listing = %q", res.Message)
-	}
-
 	// /status carries the counts.
-	res = app.executeSlash("status")
-	if !strings.Contains(res.Message, "MCP: 2/2 启用") {
-		t.Fatalf("status = %q", res.Message)
-	}
-	app.executeSlash("mcp-off filesystem")
+	app.executeSlash("mcp disable filesystem")
 	res = app.executeSlash("status")
 	if !strings.Contains(res.Message, "MCP: 1/2 启用") {
 		t.Fatalf("status after disable = %q", res.Message)
 	}
+
+	// all restores everything.
+	res = app.executeSlash("mcp enable all")
+	if res.Error || !strings.Contains(res.Message, "已启用全部") {
+		t.Fatalf("enable all = %q", res.Message)
+	}
+	res = app.executeSlash("status")
+	if !strings.Contains(res.Message, "MCP: 2/2 启用") {
+		t.Fatalf("status after enable all = %q", res.Message)
+	}
+
+	// disable all empties the effective list.
+	app.executeSlash("mcp disable all")
+	ac, _ = app.effectiveAgentConfig()
+	if len(ac.MCPServers) != 0 {
+		t.Fatalf("disable all left servers: %v", ac.MCPServers)
+	}
 }
 
-func TestMCPToggleUnreferencedServer(t *testing.T) {
+func TestMCPPanelOpensAndToggles(t *testing.T) {
+	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
+
+	// /mcp opens the panel instead of printing to the transcript.
+	res := app.executeSlash("mcp")
+	if res.Error || res.Message != "" {
+		t.Fatalf("mcp result = %+v", res)
+	}
+	m := app.model
+	if m.mcpPanelState == nil {
+		t.Fatal("panel did not open")
+	}
+
+	// The panel lists both servers with state, tool count and label.
+	out := m.View()
+	for _, want := range []string{"filesystem", "文件系统", "grep", "https://mcp.grep.app", "✓ 启用", "0 工具"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("panel missing %q:\n%s", want, out)
+		}
+	}
+
+	// Enter on the first row disables filesystem.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mcpPanelState != nil {
+		t.Fatal("panel should close after toggling")
+	}
+	ac, ok := app.effectiveAgentConfig()
+	if !ok || containsString(ac.MCPServers, "filesystem") {
+		t.Fatalf("filesystem should be disabled after panel toggle: %v", ac.MCPServers)
+	}
+
+	// Reopen: the disabled row is marked, and an enable-all row appears.
+	app.model.openMCPPanel(config.GetConfig(), app.mcpDisabled, app.setMCPServer)
+	out = app.model.View()
+	if !strings.Contains(out, "⊘ 禁用") || !strings.Contains(out, "全部启用") {
+		t.Fatalf("panel state after disable:\n%s", out)
+	}
+
+	// Esc closes without changing anything.
+	m = app.model
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.mcpPanelState != nil {
+		t.Fatal("Esc should close the panel")
+	}
+	ac, _ = app.effectiveAgentConfig()
+	if containsString(ac.MCPServers, "filesystem") {
+		t.Fatal("Esc must not re-enable the server")
+	}
+}
+
+func TestMCPPanelEnableAllRow(t *testing.T) {
+	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
+	app.executeSlash("mcp disable grep")
+
+	m := app.model
+	app.model.openMCPPanel(config.GetConfig(), app.mcpDisabled, app.setMCPServer)
+	m = app.model
+	// Rows: filesystem, grep, 全部启用. Two downs select the last one.
+	for range 2 {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mcpPanelState != nil {
+		t.Fatal("panel should close after enable-all")
+	}
+	ac, ok := app.effectiveAgentConfig()
+	if !ok || len(ac.MCPServers) != 2 {
+		t.Fatalf("enable-all should restore both servers: %v", ac.MCPServers)
+	}
+}
+
+func TestMCPEnableDisableUnreferencedServer(t *testing.T) {
 	// The agent does not use "grep": toggling it reports that tools are
 	// unchanged and does not rebuild the agent.
 	app, _ := mcpTestApp(t, []string{"filesystem"})
 
-	res := app.executeSlash("mcp-off grep")
+	res := app.executeSlash("mcp disable grep")
 	if res.Error {
-		t.Fatalf("mcp-off failed: %s", res.Message)
+		t.Fatalf("mcp disable failed: %s", res.Message)
 	}
 	if !strings.Contains(res.Message, "未引用") {
 		t.Fatalf("message should mention the server is not referenced: %q", res.Message)
@@ -162,28 +251,18 @@ func TestSlashCommandsCarryValueLabels(t *testing.T) {
 	if len(agent.ValueLabels) != len(agent.Values) {
 		t.Fatalf("agent labels = %v for values %v", agent.ValueLabels, agent.Values)
 	}
-	if !strings.Contains(strings.Join(mcp.ValueLabels, ","), "文件系统") {
-		t.Fatalf("mcp labels = %v", mcp.ValueLabels)
-	}
-	if len(mcp.Values) != 2 {
-		t.Fatalf("mcp values = %v", mcp.Values)
-	}
 	if !strings.Contains(mcp.Description, "2/2") {
 		t.Fatalf("mcp description = %q", mcp.Description)
 	}
-
-	// /mcp-off marks already-disabled servers.
-	app.executeSlash("mcp-off grep")
-	labels := strings.Join(app.mcpServerValueLabels(config.GetConfig()), "|")
-	if !strings.Contains(labels, "[已禁用]") {
-		t.Fatalf("disabled marker missing: %s", labels)
+	if len(mcp.Values) != 0 {
+		t.Fatalf("/mcp should open the panel, not list candidates: %v", mcp.Values)
 	}
 }
 
-func TestMCPToggleKeepsConfigFileUntouched(t *testing.T) {
+func TestMCPEnableDisableKeepsConfigFileUntouched(t *testing.T) {
 	app, cfg := mcpTestApp(t, []string{"filesystem", "grep"})
-	app.executeSlash("mcp-off filesystem")
-	app.executeSlash("mcp-off grep")
+	app.executeSlash("mcp disable filesystem")
+	app.executeSlash("mcp disable grep")
 	// The global config's agent definition is untouched: only the effective
 	// view filters disabled servers.
 	if ac := cfg.Agents["OniThree"]; len(ac.MCPServers) != 2 {
@@ -191,6 +270,31 @@ func TestMCPToggleKeepsConfigFileUntouched(t *testing.T) {
 	}
 }
 
-func configLoad(path string) (interface{}, error) {
-	return config.LoadConfig(path)
+func TestMCPPanelWithoutServers(t *testing.T) {
+	// /mcp without configured servers is an error message, not a panel.
+	cfg := &config.Config{
+		Providers: map[string]config.Provider{"cloud": {Type: "openai"}},
+		Models:    map[string]config.Model{"gpt": {Provider: "cloud", Model: "gpt-4o"}},
+		Agents:    map[string]config.Agent{"OniThree": {System: "Help", Model: "gpt"}},
+	}
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	data, err := marshalConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFile(dir+"/fixture.yml", data); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadConfig(dir + "/fixture.yml"); err != nil {
+		t.Fatal(err)
+	}
+	app, err := NewAgentApp("OniThree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := app.executeSlash("mcp")
+	if !res.Error || !strings.Contains(res.Message, "没有 MCP 服务") {
+		t.Fatalf("result = %+v", res)
+	}
 }

@@ -177,24 +177,16 @@ func (app *AgentApp) slashCommands() []SlashCommand {
 		return nil
 	}
 	skillValues := append([]string{"off"}, sortedKeys(cfg.Skills)...)
-	var mcpValues, mcpLabels []string
-	if len(app.mcpDisabled) == 0 {
-		mcpValues, mcpLabels = sortedKeysWithLabels(cfg.MCPServers, mcpServerLabel)
-	} else {
-		mcpValues = make([]string, 0, len(cfg.MCPServers))
-		for _, name := range sortedKeys(cfg.MCPServers) {
-			if !app.mcpDisabled[name] {
-				mcpValues = append(mcpValues, name)
-			}
-		}
+	mcpDesc := "管理 MCP 服务"
+	if len(cfg.MCPServers) > 0 {
+		mcpDesc = fmt.Sprintf("管理 MCP 服务（当前启用 %d/%d）", len(cfg.MCPServers)-len(app.mcpDisabled), len(cfg.MCPServers))
 	}
 	return []SlashCommand{
 		{Name: "agent", Args: "<name>", Description: fmt.Sprintf("切换 agent（当前: %s）", app.agentName), Values: sortedKeys(cfg.Agents), ValueLabels: agentValueLabels(cfg)},
 		{Name: "model", Args: "<name>", Description: fmt.Sprintf("切换模型（当前: %s）", app.currentModelName()), Values: sortedKeys(cfg.Models), ValueLabels: modelValueLabels(cfg)},
 		{Name: "provider", Args: "[name]", Description: "选择 provider 并添加模型", Values: sortedKeys(cfg.Providers), ValueLabels: providerValueLabels(cfg)},
 		{Name: "skill", Args: "<name>", Description: fmt.Sprintf("选择 skill（当前: %s）", app.skillName()), Values: skillValues, ValueLabels: skillValueLabels(cfg), KeepArgs: true},
-		{Name: "mcp", Args: "<name>", Description: fmt.Sprintf("启用 MCP 服务（当前启用 %d/%d）", len(cfg.MCPServers)-len(app.mcpDisabled), len(cfg.MCPServers)), Values: mcpValues, ValueLabels: mcpLabels},
-		{Name: "mcp-off", Args: "<name>", Description: "禁用 MCP 服务", Values: sortedKeys(cfg.MCPServers), ValueLabels: app.mcpServerValueLabels(cfg)},
+		{Name: "mcp", Args: "[enable|disable] [name]", Description: mcpDesc},
 		{Name: "theme", Args: "<name> [light|dark]", Description: fmt.Sprintf("切换颜色主题（当前: %s/%s）", app.model.ThemeName(), themeModeName(app.model.DarkMode())), Values: themeNames()},
 		{Name: "tools", Description: "列出当前可用工具"},
 		{Name: "status", Description: "显示当前会话状态"},
@@ -298,26 +290,11 @@ func skillValueLabels(cfg *config.Config) []string {
 	return labels
 }
 
-// mcpServerValueLabels annotates the /mcp-off candidates; disabled servers
-// are marked so the current state is visible while choosing.
-func (app *AgentApp) mcpServerValueLabels(cfg *config.Config) []string {
-	names := sortedKeys(cfg.MCPServers)
-	labels := make([]string, len(names))
-	for i, name := range names {
-		if app.mcpDisabled[name] {
-			labels[i] = "[已禁用]  " + mcpServerLabel(name, cfg.MCPServers[name])
-		} else {
-			labels[i] = mcpServerLabel(name, cfg.MCPServers[name])
-		}
-	}
-	return labels
-}
-
 // executeSlash handles agent-mode commands.
 func (app *AgentApp) executeSlash(input string) CommandResult {
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
-		return CommandResult{Message: "用法：/agent、/model、/provider、/skill、/mcp、/mcp-off、/resume、/tools、/status", Error: true}
+		return CommandResult{Message: "用法：/agent、/model、/provider、/skill、/mcp、/resume、/tools、/status", Error: true}
 	}
 	name := strings.ToLower(fields[0])
 	arg := ""
@@ -359,8 +336,41 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 	case "provider":
 		return app.model.openProvider(cfg, app.ctx, arg, app.addProviderModels)
 
-	case "mcp", "mcp-off":
-		return app.toggleMCP(name == "mcp-off", arg)
+	case "mcp":
+		// /mcp opens the management panel; enable/disable toggles without it.
+		if arg == "" || arg == "on" || arg == "panel" {
+			if len(cfg.MCPServers) == 0 {
+				return CommandResult{Message: "配置中没有 MCP 服务（mcp_servers）", Error: true}
+			}
+			app.model.openMCPPanel(cfg, app.mcpDisabled, app.setMCPServer)
+			return CommandResult{}
+		}
+		switch strings.ToLower(arg) {
+		case "enable", "disable":
+			if len(fields) < 3 {
+				return CommandResult{Message: "用法：/mcp enable|disable <name|all>", Error: true}
+			}
+			target := fields[2]
+			enable := strings.ToLower(arg) == "enable"
+			if strings.EqualFold(target, "all") {
+				servers := sortedKeys(cfg.MCPServers)
+				var msgs []string
+				for _, s := range servers {
+					if res := app.setMCPServer(s, enable); res.Error {
+						return res
+					}
+					msgs = append(msgs, s)
+				}
+				verb := "已启用"
+				if !enable {
+					verb = "已禁用"
+				}
+				return CommandResult{Message: fmt.Sprintf("%s全部 MCP 服务（%d 个，本次会话生效）", verb, len(msgs))}
+			}
+			return app.setMCPServer(target, enable)
+		default:
+			return CommandResult{Message: "用法：/mcp [enable|disable] [name|all]（不带参数打开管理面板）", Error: true}
+		}
 
 	case "skill":
 		if arg == "" {
@@ -438,70 +448,56 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 	return CommandResult{Message: "未知命令: /" + name + "（输入 /help 查看可用命令）", Error: true}
 }
 
-// toggleMCP enables or disables an MCP server for this session. The change is
-// runtime-only: the configuration file is untouched, and a restart restores
+// setMCPServer enables or disables an MCP server for this session. The change
+// is runtime-only: the configuration file is untouched, and a restart restores
 // every server.
-func (app *AgentApp) toggleMCP(off bool, name string) CommandResult {
+func (app *AgentApp) setMCPServer(name string, enable bool) CommandResult {
 	cfg := config.GetConfig()
 	if cfg == nil {
 		return CommandResult{Message: "配置未初始化", Error: true}
-	}
-	if len(cfg.MCPServers) == 0 {
-		return CommandResult{Message: "配置中没有 MCP 服务（mcp_servers）", Error: true}
-	}
-	if name == "" {
-		var b strings.Builder
-		if off {
-			b.WriteString("用法：/mcp-off <name>\n")
-		} else {
-			b.WriteString("用法：/mcp <name>\n")
-		}
-		b.WriteString("MCP 服务：")
-		for _, s := range sortedKeys(cfg.MCPServers) {
-			state := "启用"
-			if app.mcpDisabled[s] {
-				state = "已禁用"
-			}
-			b.WriteString("\n  · " + s + "（" + state + "）— " + mcpServerLabel(s, cfg.MCPServers[s]))
-		}
-		b.WriteString("\n变更仅对本次会话生效，重启后恢复配置文件的状态。")
-		return CommandResult{Message: b.String(), Error: true}
 	}
 	if _, ok := cfg.MCPServers[name]; !ok {
 		return CommandResult{Message: fmt.Sprintf("MCP 服务不存在: %s\n可用：%s", name, strings.Join(sortedKeys(cfg.MCPServers), ", ")), Error: true}
 	}
 
-	if app.mcpDisabled == nil {
-		app.mcpDisabled = make(map[string]bool)
+	already := app.mcpDisabled[name] == !enable
+	if !already {
+		if enable {
+			// Enabled entries leave the map so len() stays the disabled count.
+			delete(app.mcpDisabled, name)
+		} else {
+			if app.mcpDisabled == nil {
+				app.mcpDisabled = make(map[string]bool)
+			}
+			app.mcpDisabled[name] = true
+		}
 	}
-	changed := app.mcpDisabled[name] != off
-	if off {
-		app.mcpDisabled[name] = true
-	} else {
-		// Enabled entries leave the map so len() stays the disabled count.
-		delete(app.mcpDisabled, name)
+	verb := "启用"
+	if !enable {
+		verb = "禁用"
 	}
 
 	// The current agent only picks the change up if it references the server.
 	ac, ok := cfg.Agents[app.agentName]
 	if ok && !containsString(ac.MCPServers, name) {
-		if changed {
-			return CommandResult{Message: fmt.Sprintf("已%s MCP 服务: %s（当前 agent 未引用它，工具不变）", map[bool]string{true: "禁用", false: "启用"}[off], name)}
+		if already {
+			return CommandResult{Message: fmt.Sprintf("MCP 服务 %s 已是%s状态（当前 agent 未引用它）", name, verb)}
 		}
-		return CommandResult{Message: fmt.Sprintf("MCP 服务 %s 已是%s状态（当前 agent 未引用它）", name, map[bool]string{true: "禁用", false: "启用"}[off])}
+		return CommandResult{Message: fmt.Sprintf("已%s MCP 服务: %s（当前 agent 未引用它，工具不变）", verb, name)}
+	}
+	if already {
+		return CommandResult{Message: fmt.Sprintf("MCP 服务 %s 已是%s状态", name, verb)}
 	}
 	if err := app.rebuildAgent(); err != nil {
 		// Revert so the UI state stays truthful.
-		if changed {
-			app.mcpDisabled[name] = !off
+		if enable {
+			app.mcpDisabled[name] = true
+		} else {
+			delete(app.mcpDisabled, name)
 		}
-		return CommandResult{Message: fmt.Sprintf("%s MCP 服务失败: %v", map[bool]string{true: "禁用", false: "启用"}[off], err), Error: true}
+		return CommandResult{Message: fmt.Sprintf("%s MCP 服务失败: %v", verb, err), Error: true}
 	}
 	app.registerCommands()
-	verb := "启用"
-	if off {
-		verb = "禁用"
-	}
 	return CommandResult{Message: fmt.Sprintf("已%s MCP 服务: %s（本次会话生效）", verb, name)}
 }
 
