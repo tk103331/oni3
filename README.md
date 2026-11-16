@@ -30,7 +30,7 @@ go install github.com/tk103331/oni3@latest
 **npm**:
 
 ```bash
-npm install -g oni3    # provides the `oni3` command
+npm install -g @tk103331/oni3    # provides the `oni3` command
 oni3
 ```
 

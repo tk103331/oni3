@@ -53,7 +53,8 @@ jobs:
         run: cd npm && npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
 
       # Enabled once the npm package has a GitHub Actions trusted publisher
-      # configured (repo variable NPM_TRUSTED_PUBLISHING=true).
+      # configured (repo variable NPM_TRUSTED_PUBLISHING=true). The package is
+      # scoped (@tk103331/oni3), so public access must be forced.
       - name: Publish to npm
         if: vars.NPM_TRUSTED_PUBLISHING == 'true'
         run: cd npm && npm publish --access public --provenance
