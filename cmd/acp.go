@@ -13,7 +13,6 @@ import (
 	"github.com/tk103331/oni3/acp"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/logger"
-	"github.com/tk103331/oni3/tools"
 )
 
 var acpCmd = &cobra.Command{
@@ -45,9 +44,8 @@ Without --agent the built-in OniThree agent is served.`,
 				return err
 			}
 			agentName = name
-			// Interactive-only tools have no ACP counterpart (there is no way
-			// to ask the user), so the built-in agent does without them here.
-			dropAgentTools(cfg, agentName, tools.AskUserToolName, tools.TodoListToolName)
+			// ask_user and todo_list work over ACP now: the service bridges
+			// them to session/request_permission and agent plan updates.
 		}
 
 		if _, ok := cfg.Agents[agentName]; !ok {

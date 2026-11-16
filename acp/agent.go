@@ -18,6 +18,7 @@ import (
 	"github.com/tk103331/oni3/agent"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/tools"
 	"github.com/tk103331/oni3/version"
 )
 
@@ -29,18 +30,25 @@ type Service struct {
 	conn      *acp.AgentSideConnection
 
 	mu       sync.Mutex
-	sessions map[string]*session
+	sessions map[string]*acpSession
 	nextSeq  int
 }
 
 var _ acp.Agent = (*Service)(nil)
 
 // session holds one ACP conversation context.
-type session struct {
+type acpSession struct {
 	id      string
 	cwd     string
 	agent   agent.Agent
 	history []*schema.Message // prior turns, replayed into every prompt
+	store   *sessionStore     // on-disk persistence shared with the TUI
+	titled  bool              // first-prompt title already reported
+
+	// model/skill overrides chosen through session/set_config_option; they
+	// rebuild the eino agent for the next prompt.
+	modelOverride string
+	skillOverride string
 
 	running        bool
 	toolSeq        int
@@ -58,7 +66,7 @@ func NewService(agentName string, cfg *config.Config) *Service {
 	return &Service{
 		agentName: agentName,
 		cfg:       cfg,
-		sessions:  make(map[string]*session),
+		sessions:  make(map[string]*acpSession),
 	}
 }
 
@@ -80,9 +88,16 @@ func (s *Service) Initialize(ctx context.Context, params acp.InitializeRequest) 
 			Version: version.Version,
 		},
 		AgentCapabilities: acp.AgentCapabilities{
-			LoadSession:        false,
+			// Conversations persist to the oni3 session store and can be
+			// listed, loaded and resumed across runs.
+			LoadSession:        true,
 			PromptCapabilities: acp.PromptCapabilities{},
 			McpCapabilities:    acp.McpCapabilities{},
+			SessionCapabilities: acp.SessionCapabilities{
+				Close:  &acp.SessionCloseCapabilities{},
+				List:   &acp.SessionListCapabilities{},
+				Resume: &acp.SessionResumeCapabilities{},
+			},
 		},
 		AuthMethods: []acp.AuthMethod{},
 	}, nil
@@ -100,10 +115,11 @@ func (s *Service) NewSession(ctx context.Context, params acp.NewSessionRequest) 
 	defer s.mu.Unlock()
 	s.nextSeq++
 	sid := fmt.Sprintf("sess-%d", s.nextSeq)
-	s.sessions[sid] = &session{
+	s.sessions[sid] = &acpSession{
 		id:    sid,
 		cwd:   params.Cwd,
 		agent: einoAgent,
+		store: newSessionStore(s.agentName, s.currentModelName()),
 	}
 	if len(params.McpServers) > 0 {
 		// MCP servers come from config.yml; client-provided ones are ignored.
@@ -116,7 +132,22 @@ func (s *Service) NewSession(ctx context.Context, params acp.NewSessionRequest) 
 	}
 
 	logger.Info("ACP", fmt.Sprintf("session created: %s (cwd=%s, agent=%s)", sid, params.Cwd, s.agentName))
-	return acp.NewSessionResponse{SessionId: acp.SessionId(sid)}, nil
+
+	// Advertise the slash commands so the client can show its palette.
+	s.sendAvailableCommands(ctx, sid)
+
+	return acp.NewSessionResponse{
+		SessionId:     acp.SessionId(sid),
+		ConfigOptions: s.sessionConfigOptions(s.sessions[sid]),
+	}, nil
+}
+
+// currentModelName is the model the configured agent resolves to.
+func (s *Service) currentModelName() string {
+	if ac, ok := s.cfg.Agents[s.agentName]; ok && ac.Model != "" {
+		return ac.Model
+	}
+	return s.cfg.DefaultModelName()
 }
 
 // Prompt runs one prompt turn, streaming updates back to the client.
@@ -153,17 +184,44 @@ func (s *Service) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Pro
 		return acp.PromptResponse{}, fmt.Errorf("prompt contains no text content")
 	}
 
+	// Advertised slash commands come back as ordinary prompt text starting
+	// with "/"; answer them directly instead of calling the model.
+	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		reply := s.runSlashCommand(ctx, session, prompt)
+		s.sendUpdate(ctx, sid, acp.UpdateUserMessageText(prompt))
+		s.sendUpdate(ctx, sid, acp.UpdateAgentMessageText(reply))
+		session.store.addUser(prompt)
+		session.store.addAssistant(reply)
+		s.mu.Lock()
+		session.history = append(session.history, schema.UserMessage(prompt), schema.AssistantMessage(reply, nil))
+		s.mu.Unlock()
+		logger.Info("ACP", fmt.Sprintf("slash command handled: session=%s text=%q", sid, truncate(prompt, 200)))
+		return acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
+
 	logger.Info("ACP", fmt.Sprintf("prompt received: session=%s text=%q", sid, truncate(prompt, 200)))
+
+	// Echo the user's message back so clients that render the conversation
+	// from agent updates show it too.
+	s.sendUpdate(ctx, sid, acp.UpdateUserMessageText(prompt))
 
 	// Replay this session's prior turns so the conversation keeps its context.
 	s.mu.Lock()
 	history := append([]*schema.Message(nil), session.history...)
 	s.mu.Unlock()
 
+	// The interactive tools (ask_user, todo_list, approvals) reach the
+	// client through the host instead of failing "interactive only".
+	hostCtx := tools.WithHost(ctx, &acpHost{svc: s, session: session})
+
 	var answer strings.Builder
+	var thought strings.Builder
 	chunkCallback := s.makeChunkCallback(ctx, sid)
-	err := session.agent.ChatStream(ctx, history, prompt,
+	err := session.agent.ChatStream(hostCtx, history, prompt,
 		func(chunk *agent.StreamChunk) {
+			if chunk.Type == "reasoning" && chunk.Content != "" {
+				thought.WriteString(chunk.Content)
+			}
 			if chunk.Type == "content" && chunk.Content != "" {
 				answer.WriteString(chunk.Content)
 			}
@@ -173,22 +231,44 @@ func (s *Service) Prompt(ctx context.Context, params acp.PromptRequest) (acp.Pro
 	)
 
 	if err != nil {
+		session.store.flushThought(&thought)
+		session.store.addUser(prompt)
 		if ctx.Err() != nil {
 			logger.Info("ACP", fmt.Sprintf("prompt cancelled: session=%s", sid))
 			return acp.PromptResponse{StopReason: acp.StopReasonCancelled}, nil
 		}
 		logger.Error("ACP", fmt.Sprintf("prompt failed: session=%s error=%v", sid, err))
+		session.store.addAssistant("error: " + err.Error())
 		s.sendUpdate(ctx, sid, acp.UpdateAgentMessageText(fmt.Sprintf("\n\n❌ Agent error: %v", err)))
 		return acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 	}
 
-	// Record the completed turn for the next prompt.
+	// Record the completed turn for the next prompt and for /resume.
+	session.store.flushThought(&thought)
+	session.store.addUser(prompt)
+	if text := strings.TrimSpace(answer.String()); text != "" {
+		session.store.addAssistant(text)
+	}
+
 	s.mu.Lock()
 	session.history = append(session.history, schema.UserMessage(prompt))
 	if text := strings.TrimSpace(answer.String()); text != "" {
 		session.history = append(session.history, schema.AssistantMessage(text, nil))
 	}
 	s.mu.Unlock()
+
+	// Give the client a human-readable title derived from the first prompt.
+	if !session.titled && session.store != nil {
+		session.titled = true
+		title := firstLine(prompt)
+		if title != "" {
+			s.sendUpdate(ctx, sid, acp.SessionUpdate{
+				SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
+					Title: strPtr(fmt.Sprintf("%s · %s", s.agentName, title)),
+				},
+			})
+		}
+	}
 
 	logger.Info("ACP", fmt.Sprintf("prompt completed: session=%s", sid))
 	return acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
@@ -206,26 +286,140 @@ func (s *Service) Authenticate(ctx context.Context, params acp.AuthenticateReque
 	return acp.AuthenticateResponse{}, nil
 }
 
+// ---- session lifecycle: list / load / close ----
+
+// ListSessions reports the persisted agent conversations so clients can
+// offer "resume with oni3" across runs.
+func (s *Service) ListSessions(ctx context.Context, params acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
+	stored := listStoredSessions(50)
+	infos := make([]acp.SessionInfo, 0, len(stored))
+	for _, st := range stored {
+		updated := st.Time.UTC().Format("2006-01-02T15:04:05Z07:00")
+		infos = append(infos, acp.SessionInfo{
+			SessionId: acp.SessionId(st.ID),
+			Cwd:       st.Cwd,
+			Title:     strPtr(st.Title),
+			UpdatedAt: &updated,
+		})
+	}
+	return acp.ListSessionsResponse{Sessions: infos}, nil
+}
+
+// LoadSession replays a persisted conversation into a live ACP session. The
+// client keeps using the id it passed; the on-disk conversation continues.
+func (s *Service) LoadSession(ctx context.Context, params acp.LoadSessionRequest) (acp.LoadSessionResponse, error) {
+	store := loadSessionStore(string(params.SessionId))
+	if store == nil {
+		return acp.LoadSessionResponse{}, acp.NewInvalidParams(map[string]any{
+			"error": fmt.Sprintf("session not found: %s", string(params.SessionId)),
+		})
+	}
+
+	// A model recorded in the persisted conversation (a runtime switch)
+	// carries over instead of the configured default.
+	modelOverride := store.model()
+	factory := agent.NewFactory(s.cfg)
+	if modelOverride != "" {
+		factory = factory.WithModel(modelOverride)
+	}
+	einoAgent, err := factory.CreateAgent(s.agentName)
+	if err != nil {
+		return acp.LoadSessionResponse{}, fmt.Errorf("failed to create agent: %w", err)
+	}
+
+	history := store.history()
+	s.mu.Lock()
+	loaded := &acpSession{
+		id:            string(params.SessionId),
+		cwd:           params.Cwd,
+		agent:         einoAgent,
+		history:       append([]*schema.Message(nil), history...),
+		store:         store,
+		titled:        true,
+		modelOverride: modelOverride,
+	}
+	s.sessions[string(params.SessionId)] = loaded
+	options := s.sessionConfigOptions(loaded)
+	s.mu.Unlock()
+
+	logger.Info("ACP", fmt.Sprintf("session loaded: %s (events=%d, model=%s)", string(params.SessionId), len(history), modelOverride))
+
+	// Advertise the slash commands so the client can show its palette.
+	s.sendAvailableCommands(ctx, string(params.SessionId))
+
+	return acp.LoadSessionResponse{ConfigOptions: options}, nil
+}
+
+// CloseSession releases the in-memory state; the persisted conversation
+// stays on disk for later resume.
+func (s *Service) CloseSession(ctx context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
+	s.mu.Lock()
+	delete(s.sessions, string(params.SessionId))
+	s.mu.Unlock()
+	logger.Info("ACP", fmt.Sprintf("session closed: %s", string(params.SessionId)))
+	return acp.CloseSessionResponse{}, nil
+}
+
+// ResumeSession continues a stored conversation under a fresh ACP session
+// id. Unlike session/load it does not replay the previous messages to the
+// client; the history is present as model context and new turns append to
+// the same on-disk conversation.
+func (s *Service) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
+	store := loadSessionStore(string(params.SessionId))
+	if store == nil {
+		return acp.ResumeSessionResponse{}, acp.NewInvalidParams(map[string]any{
+			"error": fmt.Sprintf("session not found: %s", string(params.SessionId)),
+		})
+	}
+	// The persisted session keeps its on-disk identity; the ACP session id is
+	// a fresh one so the client can treat it like a new session.
+	s.mu.Lock()
+	s.nextSeq++
+	sid := fmt.Sprintf("sess-%d", s.nextSeq)
+	loaded := &acpSession{
+		id:      sid,
+		cwd:     params.Cwd,
+		history: append([]*schema.Message(nil), store.history()...),
+		store:   store,
+		titled:  true,
+	}
+	// A model recorded in the persisted conversation (a runtime /model or
+	// config-option switch) carries over instead of the configured default.
+	if model := store.model(); model != "" {
+		loaded.modelOverride = model
+	}
+	s.sessions[sid] = loaded
+	options := s.sessionConfigOptions(loaded)
+	s.mu.Unlock()
+
+	factory := agent.NewFactory(s.cfg)
+	if loaded.modelOverride != "" {
+		factory = factory.WithModel(loaded.modelOverride)
+	}
+	einoAgent, err := factory.CreateAgent(s.agentName)
+	if err != nil {
+		s.mu.Lock()
+		delete(s.sessions, sid)
+		s.mu.Unlock()
+		return acp.ResumeSessionResponse{}, fmt.Errorf("failed to create agent: %w", err)
+	}
+	s.mu.Lock()
+	loaded.agent = einoAgent
+	s.mu.Unlock()
+
+	logger.Info("ACP", fmt.Sprintf("session resumed: %s -> %s (events=%d, model=%s)",
+		string(params.SessionId), sid, len(loaded.history), loaded.modelOverride))
+
+	// Advertise the slash commands so the client can show its palette.
+	s.sendAvailableCommands(ctx, sid)
+
+	return acp.ResumeSessionResponse{ConfigOptions: options}, nil
+}
+
 // ---- unsupported optional methods ----
 
 func (s *Service) Logout(ctx context.Context, params acp.LogoutRequest) (acp.LogoutResponse, error) {
 	return acp.LogoutResponse{}, acp.NewMethodNotFound(acp.AgentMethodLogout)
-}
-
-func (s *Service) CloseSession(ctx context.Context, params acp.CloseSessionRequest) (acp.CloseSessionResponse, error) {
-	return acp.CloseSessionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionClose)
-}
-
-func (s *Service) ListSessions(ctx context.Context, params acp.ListSessionsRequest) (acp.ListSessionsResponse, error) {
-	return acp.ListSessionsResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionList)
-}
-
-func (s *Service) ResumeSession(ctx context.Context, params acp.ResumeSessionRequest) (acp.ResumeSessionResponse, error) {
-	return acp.ResumeSessionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionResume)
-}
-
-func (s *Service) SetSessionConfigOption(ctx context.Context, params acp.SetSessionConfigOptionRequest) (acp.SetSessionConfigOptionResponse, error) {
-	return acp.SetSessionConfigOptionResponse{}, acp.NewMethodNotFound(acp.AgentMethodSessionSetConfigOption)
 }
 
 func (s *Service) SetSessionMode(ctx context.Context, params acp.SetSessionModeRequest) (acp.SetSessionModeResponse, error) {
@@ -259,7 +453,7 @@ func (s *Service) makeChunkCallback(ctx context.Context, sid string) func(*agent
 // makeToolCallback converts tool call callbacks into tool_call updates.
 // Internal ReAct node events (ChatModel, Tools orchestrator) are filtered out
 // so only real tool invocations are reported to the client.
-func (s *Service) makeToolCallback(ctx context.Context, sid string, session *session) func(interface{}) {
+func (s *Service) makeToolCallback(ctx context.Context, sid string, session *acpSession) func(interface{}) {
 	return func(data interface{}) {
 		info, ok := data.(agent.ToolCallInfo)
 		if !ok {
@@ -306,6 +500,7 @@ func (s *Service) makeToolCallback(ctx context.Context, sid string, session *ses
 			}
 			logger.Info("ACP", fmt.Sprintf("tool_call start: session=%s id=%s name=%s", sid, toolCallID, info.Name))
 			s.sendUpdate(ctx, sid, acp.StartToolCall(toolCallID, buildToolTitle(info.Name, info.Arguments), opts...))
+			session.store.addToolStart(info.Name, info.Arguments)
 
 		case "end", "error":
 			s.mu.Lock()
@@ -356,12 +551,23 @@ func (s *Service) makeToolCallback(ctx context.Context, sid string, session *ses
 				)
 			}
 			s.sendUpdate(ctx, sid, update)
+			// Persist the call result so a resumed conversation keeps the
+			// tool record too, not just the text turns.
+			if info.Type == "end" {
+				session.store.addToolEnd(info.Name, info.Result, false)
+			} else {
+				session.store.addToolEnd(info.Name, info.Error, true)
+			}
 		}
 	}
 }
 
-// sendUpdate wraps and sends a session/update notification.
+// sendUpdate wraps and sends a session/update notification. Without a
+// connection (unit tests) it is a no-op.
 func (s *Service) sendUpdate(ctx context.Context, sid string, update acp.SessionUpdate) {
+	if s.conn == nil {
+		return
+	}
 	if err := s.conn.SessionUpdate(ctx, acp.SessionNotification{
 		SessionId: acp.SessionId(sid),
 		Update:    update,

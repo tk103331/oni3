@@ -105,6 +105,7 @@ func (m *ViewModel) openProvider(cfg *config.Config, ctx context.Context, name s
 	m.provider = &providerState{cfg: cfg, ctx: ctx, stage: providerChoose, onAdd: onAdd}
 	m.input, m.cursor = "", 0
 	m.markDirty()
+	reportStatus("blocked", "", "选择 provider")
 	if name != "" {
 		return CommandResult{Cmd: m.chooseProvider(name)}
 	}
@@ -119,6 +120,7 @@ func (m *ViewModel) chooseProvider(name string) tea.Cmd {
 	if strings.TrimSpace(provider.APIKey) == "" && !provider.APIKeyOptional {
 		p.stage = providerKey
 		m.markDirty()
+		reportStatus("blocked", "auth", name+"：输入 API Key")
 		return nil
 	}
 	return m.fetchProviderModels()
@@ -138,6 +140,7 @@ func (m *ViewModel) fetchProviderModels() tea.Cmd {
 	p.stage, p.failure = providerLoading, ""
 	m.input, m.cursor = "", 0
 	m.markDirty()
+	reportStatus("working", "", "正在获取 "+p.name+" 的模型列表")
 	return func() tea.Msg {
 		defer cancel()
 		entries, err := models.DiscoverModels(ctx, provider)
@@ -164,17 +167,20 @@ func (m *ViewModel) receiveProviderModels(msg providerModelsMsg) {
 		}
 		p.stage, p.failure, p.sel = providerFailed, oneLine(ansi.Strip(text)), 0
 		m.markDirty()
+		reportStatus("error", "", p.name+"：获取模型列表失败")
 		return
 	}
 	if len(msg.models) == 0 {
 		p.stage, p.failure, p.sel = providerFailed, "provider 返回了空模型列表", 0
 		m.markDirty()
+		reportStatus("error", "", p.name+"：返回了空模型列表")
 		return
 	}
 	if p.candidateKey != "" {
 		if err := p.cfg.SetProviderAPIKey(p.name, p.candidateKey); err != nil {
 			p.stage, p.failure, p.sel = providerFailed, "API Key 保存失败，请检查本地状态目录的写入权限", 0
 			m.markDirty()
+			reportStatus("error", "", p.name+"：API Key 保存失败")
 			return
 		}
 		p.candidateKey = ""
@@ -185,6 +191,7 @@ func (m *ViewModel) receiveProviderModels(msg providerModelsMsg) {
 	p.focus, p.action = paneFocusList, 0
 	m.input, m.cursor = "", 0
 	m.markDirty()
+	reportStatus("blocked", "", p.name+"：选择模型")
 }
 
 // pickedIDs returns the marked model IDs in discovery order.
@@ -220,6 +227,13 @@ func (m *ViewModel) closeProvider() {
 	m.provider = nil
 	m.input, m.cursor = "", 0
 	m.markDirty()
+	// The modal is gone; the terminal sees the chat state again. A turn that
+	// kept running behind the modal is still working, otherwise oni3 is idle.
+	if m.isWaiting {
+		reportStatus("working", "", "")
+	} else {
+		reportStatus("idle", "", "")
+	}
 }
 
 // providerChooseOrder lists providers for the picker: the built-in catalog

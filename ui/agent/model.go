@@ -333,6 +333,13 @@ func (m *ViewModel) finishQuestion(answer string) {
 	m.question = nil
 	m.input = ""
 	m.cursor = 0
+	// The blocked record must not go stale: the turn resumes as working, and
+	// a prompt answered outside a turn (e.g. cancelled earlier) is idle.
+	if m.isWaiting {
+		reportStatus("working", "", "")
+	} else {
+		reportStatus("idle", "", "")
+	}
 	answer = strings.TrimSpace(answer)
 	if q.reply != nil {
 		select {
@@ -374,6 +381,13 @@ func (m *ViewModel) clearQuestion() {
 		}
 	}
 	m.markDirty()
+	// The turn resumes (or ends elsewhere); the terminal sees working again
+	// until the next report says otherwise.
+	if m.isWaiting {
+		reportStatus("working", "", "")
+	} else {
+		reportStatus("idle", "", "")
+	}
 }
 
 // handleQuestionKey routes keys to the pending ask_user question. It returns
@@ -672,6 +686,12 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input = ""
 		m.cursor = 0
 		m.markDirty()
+		// The turn keeps running behind the prompt: blocked, not working.
+		if msg.Approval {
+			reportStatus("blocked", "permission", msg.Question)
+		} else {
+			reportStatus("blocked", "question", msg.Question)
+		}
 		return m, nil
 
 	case CancelQuestionMsg:
@@ -724,6 +744,8 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.stopArmed {
 				m.stopArmed = false
 				m.markDirty()
+				// The protocol says a user interruption reports idle.
+				reportStatus("idle", "", "")
 				if m.onInterrupt != nil {
 					m.onInterrupt()
 				}
@@ -903,6 +925,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errorMsg = ""
 			m.scrollOffset = 0
 			m.markDirty()
+			reportStatus("working", "", "正在处理："+userInput)
 
 			cmds := []tea.Cmd{sendMsgCmd(userInput, m.onSendMsg)}
 			if !m.spinnerStarted {
@@ -944,6 +967,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scrollOffset = 0
 		m.markDirty()
 		m.lastRender = time.Time{} // Render immediately
+		reportStatus("done", "", "回复完成")
 		return m, nil
 
 	case StreamChunkMsg:
@@ -973,6 +997,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.scrollOffset = 0
 		m.markDirty()
 		m.lastRender = time.Time{}
+		reportStatus("done", "", "回复完成")
 		return m, nil
 
 	case ToolStartMsg:
@@ -1058,6 +1083,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clearQuestion()
 		m.markDirty()
 		m.lastRender = time.Time{}
+		reportStatus("error", "", errorText)
 		return m, nil
 	}
 

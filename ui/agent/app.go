@@ -92,6 +92,7 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	agentModel.SetSubtitle(app.headerSubtitle())
 	agentModel.SetWorkDir(app.workDirLabel())
 	app.model = agentModel
+	reportStatus("idle", "", "")
 	agentModel.SetMouseToggle(app.toggleMouse)
 	agentModel.SetOnClear(app.startNewSession)
 	agentModel.SetOnInterrupt(app.Interrupt)
@@ -169,6 +170,10 @@ func (app *AgentApp) toggleMouse() bool {
 // Run runs the Agent application
 func (app *AgentApp) Run() error {
 	defer app.model.closeProvider()
+	// done/error records survive process exit; an interrupted or idle
+	// session leaves an idle record behind. After this the working record
+	// (if any) would be dropped by the terminal anyway.
+	defer reportStatus("idle", "", "")
 	app.openFirstRunProvider()
 	return runTUI(app.program)
 }
