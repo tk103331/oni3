@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestTUIRendering(t *testing.T) {
 	m = drive(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 
 	// Welcome screen
-	if out := m.View(); !strings.Contains(out, "Welcome") {
+	if out := m.View(); !strings.Contains(out, "ONI3") {
 		t.Fatalf("welcome screen missing:\n%s", out)
 	}
 
@@ -104,7 +105,7 @@ func TestTUIRendering(t *testing.T) {
 	if len(m.messages) != 0 {
 		t.Fatalf("ctrl+l did not clear: %d", len(m.messages))
 	}
-	if out := m.View(); !strings.Contains(out, "Welcome") {
+	if out := m.View(); !strings.Contains(out, "ONI3") {
 		t.Fatalf("welcome not restored after clear:\n%s", out)
 	}
 }
@@ -163,7 +164,7 @@ func TestTUIEnhancements(t *testing.T) {
 	if len(m.messages) != 0 || m.input != "" {
 		t.Fatalf("/clear failed: msgs=%d input=%q", len(m.messages), m.input)
 	}
-	if out := m.View(); !strings.Contains(out, "Welcome") {
+	if out := m.View(); !strings.Contains(out, "ONI3") {
 		t.Fatalf("welcome not restored after /clear:\n%s", out)
 	}
 }
@@ -575,5 +576,43 @@ func TestDoubleEscStopsRunningReply(t *testing.T) {
 	m = drive(m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.stopArmed || stopped != 1 {
 		t.Fatal("Esc outside a run must not arm or interrupt")
+	}
+}
+
+func TestHeaderShowsWorkingDirectory(t *testing.T) {
+	m := NewViewModel(func(string) error { return nil })
+	m = drive(m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	m.SetWorkDir("/some/project")
+	out := m.View()
+	if !strings.Contains(out, "/some/project") {
+		t.Fatalf("header missing the working directory:\n%s", out)
+	}
+	// The directory shares the second header row with the status, which is
+	// pushed to the right edge.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "/some/project") && !strings.Contains(line, "● ready") {
+			t.Fatalf("status not on the header row: %q", line)
+		}
+	}
+	// An empty directory leaves the status alone on the second row.
+	m.SetWorkDir("")
+	if !strings.Contains(m.View(), "● ready") {
+		t.Fatal("empty work dir should keep the status visible")
+	}
+}
+
+func TestAbbreviatePath(t *testing.T) {
+	home := os.Getenv("HOME")
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{home, "~"},
+		{home + "/code", "~/code"},
+		{"/a/b", "/a/b"},
+		{"/very/long/path/to/some/project", "/very/…/some/project"},
+	}
+	for _, tc := range cases {
+		if got := abbreviatePath(tc.in); got != tc.want {
+			t.Errorf("abbreviatePath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

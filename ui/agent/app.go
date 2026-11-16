@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -89,6 +90,7 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	// Create Agent model, passing in the callback function for sending messages
 	agentModel := NewViewModel(app.sendMessage)
 	agentModel.SetSubtitle(app.headerSubtitle())
+	agentModel.SetWorkDir(app.workDirLabel())
 	app.model = agentModel
 	agentModel.SetMouseToggle(app.toggleMouse)
 	agentModel.SetOnClear(app.startNewSession)
@@ -110,6 +112,15 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 // the configured default).
 func (app *AgentApp) headerSubtitle() string {
 	return headerLabel(app.displayName(), app.currentModelName())
+}
+
+// workDirLabel returns the process working directory for the header; tools
+// resolve relative paths against it, so showing it keeps the user oriented.
+func (app *AgentApp) workDirLabel() string {
+	if dir, err := os.Getwd(); err == nil {
+		return dir
+	}
+	return ""
 }
 
 // displayName returns the label of the active agent. It is the configured

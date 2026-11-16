@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -62,6 +63,7 @@ type ViewModel struct {
 	isWaiting        bool // Waiting for AI response
 	errorMsg         string
 	subtitle         string             // Header subtitle (agent or model name)
+	workDir          string             // Working directory shown in the header
 	onSendMsg        func(string) error // Callback for sending messages
 	streamingContent string             // Currently streaming content
 	reasoningContent string             // Currently streaming model reasoning
@@ -518,6 +520,13 @@ func (m *ViewModel) SetMouseToggle(fn func() bool) {
 // SetSubtitle sets the header subtitle (agent or model name).
 func (m *ViewModel) SetSubtitle(subtitle string) {
 	m.subtitle = strings.TrimSpace(subtitle)
+}
+
+// SetWorkDir sets the working directory shown in the header. An empty value
+// hides it.
+func (m *ViewModel) SetWorkDir(dir string) {
+	m.workDir = strings.TrimSpace(dir)
+	m.markDirty()
 }
 
 // NewViewModel creates a new ViewModel
@@ -1232,7 +1241,10 @@ func (m *ViewModel) deleteWord() {
 // never exceed the terminal height.
 func (m *ViewModel) paletteView() []string {
 	hints := m.slashHints()
-	maxLines := min(8, maxInt(m.height-7-len(m.todoPanelLines())-len(m.questionPanelLines()), 0))
+	// The palette competes with the question prompt and task panel for the
+	// rows above the input box; keep a full frame (7 fixed rows + at least
+	// one transcript row) available.
+	maxLines := min(8, maxInt(m.height-8-len(m.todoPanelLines())-len(m.questionPanelLines()), 0))
 	if maxLines <= 0 {
 		return nil
 	}
@@ -1254,11 +1266,13 @@ func (m *ViewModel) paletteView() []string {
 }
 
 func (m *ViewModel) viewportHeight() int {
-	// Fixed chrome: header(1) + rule(1) + help bar(1) + input box(3), plus
-	// the task panel, question prompt and command palette when shown.
-	h := m.height - 6 - len(m.paletteView()) - len(m.todoPanelLines()) - len(m.questionPanelLines())
-	if h < 1 {
-		h = 1
+	// Fixed chrome: header(2) + rule(1) + help bar(1) + input box(3), plus
+	// the task panel, question prompt and command palette when shown. It can
+	// reach zero: on a short terminal with panels open the transcript gives
+	// way entirely before the input box does.
+	h := m.height - 7 - len(m.paletteView()) - len(m.todoPanelLines()) - len(m.questionPanelLines())
+	if h < 0 {
+		h = 0
 	}
 	return h
 }
@@ -1388,9 +1402,10 @@ func (m *ViewModel) updateRenderedLines() {
 
 	// Welcome screen when there is nothing to show
 	if len(m.renderedLines) == 0 {
+		brand := lipgloss.NewStyle().Bold(true).Render("ONI3")
 		appendOwned(-1, []string{
 			"",
-			lipgloss.NewStyle().Bold(true).Render("  Welcome to Oni3"),
+			"  " + brand,
 			"",
 			m.muted().Render("  描述任务，开始对话。"),
 			"",
@@ -1718,7 +1733,7 @@ func (m *ViewModel) todoPanelLines() []string {
 	width := maxInt(m.width-9, 10)
 	head := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Primary)).Bold(true).
 		Render(fmt.Sprintf("☑ 任务 %d/%d", done, len(m.todos)))
-	budget := maxInt(m.height-7-len(m.questionPanelLines()), 0)
+	budget := maxInt(m.height-8-len(m.questionPanelLines()), 0)
 	if budget == 0 {
 		return nil
 	}
@@ -1785,7 +1800,7 @@ func (m *ViewModel) questionPanelLines() []string {
 	}
 
 	if len(q.options) > 0 && !q.typing {
-		maxOptions := min(6, maxInt(m.height-8-len(lines), 1))
+		maxOptions := min(6, maxInt(m.height-9-len(lines), 1))
 		sel := q.sel
 		if sel < 0 || sel >= len(q.options) {
 			sel = 0
@@ -1868,11 +1883,43 @@ func (m *ViewModel) View() string {
 	}
 	dot := lipgloss.NewStyle().Foreground(lipgloss.Color(statusDot)).Render("●")
 	status := dot + m.muted().Render(" "+statusText)
-	title := lipgloss.NewStyle().Bold(true).Render("Oni3")
-	if m.subtitle != "" {
-		title += m.muted().Render("  /  " + oneLine(m.subtitle))
+	// Two-line header: the ONI3 wordmark sits beside the agent and model on
+	// the first row; the working directory and status share the second.
+	// The glyphs use half blocks (▀ fills the top pixel row of a cell, ▄ the
+	// bottom), so each two-row letter is drawn on a 4-pixel-tall grid.
+	logoLines := []string{
+		" █▀▀█  █▄ █  ▀█▀  ▀▀█",
+		" █▄▄█  █ ▀█  ▄█▄  ▄██",
 	}
-	header := joinRow(title, status, m.width)
+	for i, line := range logoLines {
+		logoLines[i] = m.primaryStyle(true).Render(line)
+	}
+	logoWidth := lipgloss.Width(logoLines[0])
+	sideWidth := maxInt(m.width-logoWidth-1, 1)
+	// The side column carries the agent/model pair on the first row and the
+	// working directory plus status on the second; both truncate instead of
+	// pushing the width out, and the status never leaves the header.
+	left1 := lipgloss.NewStyle().Bold(true).Render("ONI3")
+	if m.subtitle != "" {
+		left1 += m.muted().Render("  /  " + oneLine(m.subtitle))
+	}
+	left2 := ""
+	// The working directory is abbreviated with ~ for the home directory so
+	// long paths stay readable on narrow terminals.
+	if m.workDir != "" {
+		left2 = m.muted().Render(abbreviatePath(oneLine(m.workDir)))
+	}
+	row1 := joinRow(left1, "", sideWidth)
+	row2 := joinRow(left2, status, sideWidth)
+	logo := strings.Join(logoLines, "\n")
+	side := row1 + "\n" + row2
+	header := lipgloss.JoinHorizontal(lipgloss.Top, logo, " ", side)
+	// The wordmark only renders when the status column fits beside it; on a
+	// narrow terminal the header stays two rows but drops the logo so the
+	// status survives the width clip.
+	if m.width < logoWidth+12 {
+		header = row1 + "\n" + joinRow(left2, status, m.width)
+	}
 	rule := m.muted().Render(strings.Repeat("─", maxInt(m.width, 0)))
 
 	// ---- Input area ----
@@ -1957,8 +2004,12 @@ func (m *ViewModel) View() string {
 	// Layout (top to bottom): header, rule, messages, task panel, question
 	// prompt / command palette, input box, help bar. The input box stays in a
 	// fixed position when a panel appears, and the hint line sits directly
-	// below it as the bottom-most row.
-	parts := []string{header, rule, messageArea}
+	// below it as the bottom-most row. A zero-row transcript contributes no
+	// line at all, so panels can use its rows on a short terminal.
+	parts := []string{header, rule}
+	if viewport > 0 {
+		parts = append(parts, messageArea)
+	}
 	if todoPanel := m.todoPanelLines(); len(todoPanel) > 0 {
 		parts = append(parts, strings.Join(todoPanel, "\n"))
 	}
@@ -1984,7 +2035,7 @@ func (m *ViewModel) View() string {
 	if m.height > 0 && len(lines) > m.height {
 		excess := len(lines) - m.height
 		if excess < viewport {
-			lines = append(lines[:2], lines[2+excess:]...)
+			lines = append(lines[:3], lines[3+excess:]...)
 		} else {
 			lines = lines[:m.height]
 		}
@@ -2171,6 +2222,39 @@ func summarizeValue(value interface{}) string {
 }
 
 // oneLine collapses a text into a single line.
+// abbreviatePath shortens a directory path for the header: the home directory
+// becomes ~ and long paths keep the first and last two segments.
+func abbreviatePath(path string) string {
+	if path == "" {
+		return path
+	}
+	prefix := ""
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if path == home {
+			return "~"
+		}
+		if strings.HasPrefix(path, home+"/") {
+			prefix = "~/"
+			path = strings.TrimPrefix(path, home) // keep the part after ~
+		}
+	}
+	// Absolute paths keep their leading slash when reassembled.
+	if strings.HasPrefix(path, "/") && prefix == "" {
+		prefix = "/"
+	}
+	segs := strings.Split(strings.Trim(path, "/"), "/")
+	// The ~ prefix already hides the home segments, so it tolerates two more
+	// before abbreviating.
+	limit := 4
+	if prefix == "~/" {
+		limit = 6
+	}
+	if len(segs) <= limit {
+		return prefix + strings.Join(segs, "/")
+	}
+	return prefix + segs[0] + "/…/" + strings.Join(segs[len(segs)-2:], "/")
+}
+
 func oneLine(text string) string {
 	text = strings.ReplaceAll(text, "\r\n", " ")
 	text = strings.ReplaceAll(text, "\n", " ")

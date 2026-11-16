@@ -55,7 +55,7 @@ func TestFrameNeverExceedsTerminalHeight(t *testing.T) {
 					}
 				}
 				// The header and the input box must survive the scrolling.
-				if !strings.Contains(out, "Oni3") {
+				if !strings.Contains(out, "ONI3") {
 					t.Fatalf("scroll %d: the header is missing", scroll)
 				}
 				if !strings.Contains(out, "╭") {

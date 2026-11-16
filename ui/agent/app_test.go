@@ -36,16 +36,16 @@ func TestHeaderShowsSubtitle(t *testing.T) {
 
 func TestHeaderTruncatesLongSubtitle(t *testing.T) {
 	m := NewViewModel(func(string) error { return nil })
-	// Narrow enough that the full agent/model pair cannot fit next to the status.
+	// Narrow enough that the full agent/model pair cannot fit beside the logo.
 	m = drive(m, tea.WindowSizeMsg{Width: 52, Height: 20})
 	m.SetSubtitle(headerLabel("very-long-agent-name", "very-long-model-name"))
 
 	lines := strings.Split(m.View(), "\n")
-	first := lines[0]
-	if !strings.Contains(first, "…") {
-		t.Fatalf("long subtitle was not truncated:\n%s", first)
+	if !strings.Contains(lines[0], "…") {
+		t.Fatalf("long subtitle was not truncated:\n%s", lines[0])
 	}
-	if !strings.Contains(first, "ready") {
-		t.Fatalf("status pushed off the header row:\n%s", first)
+	// The status shares the second header row and never falls off it.
+	if !strings.Contains(lines[1], "ready") {
+		t.Fatalf("status pushed off the header row:\n%s", lines[1])
 	}
 }

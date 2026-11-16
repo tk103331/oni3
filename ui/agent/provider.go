@@ -605,7 +605,7 @@ func (m *ViewModel) providerPanelLines() []string {
 		lines = append(lines, m.muted().Render(truncate(hint, width)))
 	}
 	if len(options) > 0 {
-		maxOptions := min(8, max(m.height-10-len(lines), 1))
+		maxOptions := min(8, max(m.height-11-len(lines), 1))
 		sel := min(max(p.sel, 0), len(options)-1)
 		start := max(sel-maxOptions+1, 0)
 		end := min(start+maxOptions, len(options))

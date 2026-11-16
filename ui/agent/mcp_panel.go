@@ -310,7 +310,7 @@ func (m *ViewModel) mcpPanelLines() []string {
 	hint := " 空格 选中/取消 · ↑↓ 选择（首尾循环） · Tab 切换操作栏 · Enter 关闭 · Esc 取消（仅本次会话生效）"
 	lines = append(lines, m.muted().Render(truncate(hint, width)))
 	sel := min(max(p.sel, 0), len(p.rows)-1)
-	maxRows := minInt(8, maxInt(m.height-12, 1))
+	maxRows := minInt(8, maxInt(m.height-13, 1))
 	start := maxInt(sel-maxRows+1, 0)
 	end := minInt(start+maxRows, len(p.rows))
 	for i := start; i < end; i++ {

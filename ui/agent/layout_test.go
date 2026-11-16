@@ -107,8 +107,10 @@ func TestResponsiveLayoutStates(t *testing.T) {
 				if m.isWaiting {
 					status = "thinking"
 				}
-				if !strings.Contains(lines[0], status) {
-					t.Fatalf("header lost status: %s", lines[0])
+				// The two-line header carries the status on its second row; a
+				// narrow terminal truncates the side column but never the status.
+				if !strings.Contains(lines[1], status) {
+					t.Fatalf("header lost status: %s", lines[1])
 				}
 				if !strings.HasPrefix(lines[len(lines)-2], "╰") {
 					t.Fatal("input moved away from the bottom")
