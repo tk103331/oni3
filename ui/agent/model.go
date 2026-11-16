@@ -106,6 +106,9 @@ type ViewModel struct {
 	question       *questionState
 	provider       *providerState
 	mcpPanelState  *mcpPanel
+	// onMCPDisabled reads the host's disabled-server set so the MCP panel can
+	// refresh after a toggle; nil means nothing is disabled.
+	onMCPDisabled func() map[string]bool
 
 	// Efficient line-based rendering cache: rebuilt only when content
 	// changes (dirty) and at most once per renderInterval while streaming.

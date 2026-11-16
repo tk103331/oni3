@@ -179,18 +179,20 @@ func TestPaletteClampAndNormalScroll(t *testing.T) {
 	m = drive(m, tea.WindowSizeMsg{Width: 110, Height: 30})
 	m.SetSlashCommands([]SlashCommand{{Name: "model", Args: "<name>", Values: []string{"a"}}}, nil)
 
-	// Up at the top clamps to 0.
+	// Up at the top wraps to the last row.
 	m = drive(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = drive(m, tea.KeyMsg{Type: tea.KeyUp})
+	items := m.paletteItems()
+	if m.paletteSel != len(items)-1 {
+		t.Fatalf("palette selection should wrap to the last row, got %d of %d", m.paletteSel, len(items))
+	}
+	// Down from the last row wraps back to the first.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyDown})
 	if m.paletteSel != 0 {
-		t.Fatalf("palette selection should clamp at 0, got %d", m.paletteSel)
+		t.Fatalf("palette selection should wrap to the first row, got %d", m.paletteSel)
 	}
 
 	// Without a palette, arrows scroll the conversation again.
-	m = drive(m, tea.KeyMsg{Type: tea.KeyUp})
-	if m.paletteSel != 0 {
-		t.Fatalf("palette selection changed unexpectedly")
-	}
 	m2 := NewViewModel(func(string) error { return nil })
 	m2 = drive(m2, tea.WindowSizeMsg{Width: 110, Height: 10})
 	m2 = drive(m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hello")})

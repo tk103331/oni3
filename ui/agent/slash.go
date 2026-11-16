@@ -2,9 +2,11 @@ package agent
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/tk103331/oni3/agent"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/logger"
@@ -187,10 +189,10 @@ func (app *AgentApp) slashCommands() []SlashCommand {
 		{Name: "provider", Args: "[name]", Description: "选择 provider 并添加模型", Values: sortedKeys(cfg.Providers), ValueLabels: providerValueLabels(cfg)},
 		{Name: "skill", Args: "<name>", Description: fmt.Sprintf("选择 skill（当前: %s）", app.skillName()), Values: skillValues, ValueLabels: skillValueLabels(cfg), KeepArgs: true},
 		{Name: "mcp", Args: "[enable|disable] [name]", Description: mcpDesc},
-		{Name: "theme", Args: "<name> [light|dark]", Description: fmt.Sprintf("切换颜色主题（当前: %s/%s）", app.model.ThemeName(), themeModeName(app.model.DarkMode())), Values: themeNames()},
+		{Name: "theme", Args: "<name> [light|dark]", Description: fmt.Sprintf("切换颜色主题（当前: %s/%s）", app.model.ThemeName(), themeModeName(app.model.DarkMode())), Values: themeNames(), ValueLabels: app.themeValueLabels()},
 		{Name: "tools", Description: "列出当前可用工具"},
 		{Name: "status", Description: "显示当前会话状态"},
-		{Name: "resume", Args: "<编号|id>", Description: "恢复历史会话（不带参数列出会话）", Values: recentSessionIDs(session.KindAgent, 10)},
+		{Name: "resume", Args: "<编号|id>", Description: "恢复历史会话（不带参数列出会话）", Values: recentSessionIDs(session.KindAgent, 10), ValueLabels: resumeValueLabels(session.KindAgent, 10)},
 	}
 }
 
@@ -205,22 +207,42 @@ func sortedKeysWithLabels[V any](m map[string]V, label func(string, V) string) (
 }
 
 // mcpServerLabel renders the palette label of an MCP server: its configured
-// description, or a summary of the endpoint when none is set.
+// description, or a summary of the endpoint when none is set. stdio servers
+// show "cmd args…"; HTTP servers show the URL without query parameters.
 func mcpServerLabel(name string, server config.MCPServer) string {
 	if d := strings.TrimSpace(server.Description); d != "" {
 		return d
 	}
+	return mcpEndpointLabel(server)
+}
+
+// mcpEndpointLabel summarizes how to reach a server.
+func mcpEndpointLabel(server config.MCPServer) string {
 	switch server.Type {
 	case config.MCPTypeStdio:
 		if server.Cmd != "" {
-			return server.Cmd
+			parts := append([]string{server.Cmd}, server.Args...)
+			return strings.Join(parts, " ")
 		}
 	case config.MCPTypeSSE, config.MCPTypeStreamableHTTP:
 		if server.URL != "" {
-			return server.URL
+			return stripURLQuery(server.URL)
 		}
 	}
 	return server.Type
+}
+
+// stripURLQuery drops the query string and fragment from a URL for display.
+func stripURLQuery(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Scheme != "" {
+		u.RawQuery = ""
+		u.Fragment = ""
+		return u.String()
+	}
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		return raw[:i]
+	}
+	return raw
 }
 
 // agentValueLabels annotates the /agent candidates with the agent's
@@ -241,8 +263,7 @@ func agentValueLabels(cfg *config.Config) []string {
 	return labels
 }
 
-// modelValueLabels annotates the /model candidates with the remote model ID
-// and provider, distinguishing entries that share a display name.
+// modelValueLabels annotates the /model candidates with "provider.model-id".
 func modelValueLabels(cfg *config.Config) []string {
 	names := sortedKeys(cfg.Models)
 	labels := make([]string, len(names))
@@ -250,25 +271,20 @@ func modelValueLabels(cfg *config.Config) []string {
 		m := cfg.Models[name]
 		label := m.Model
 		if m.Provider != "" {
-			label = m.Provider + "/" + m.Model
+			label = m.Provider + "." + m.Model
 		}
 		labels[i] = label
 	}
 	return labels
 }
 
-// providerValueLabels annotates the /provider candidates with their type and
-// base URL.
+// providerValueLabels annotates the /provider candidates with their base URL.
 func providerValueLabels(cfg *config.Config) []string {
 	names := sortedKeys(cfg.Providers)
 	labels := make([]string, len(names))
 	for i, name := range names {
 		p := cfg.Providers[name]
-		label := p.EffectiveType()
-		if p.BaseURL != "" {
-			label += "  " + p.BaseURL
-		}
-		labels[i] = label
+		labels[i] = p.BaseURL
 	}
 	return labels
 }
@@ -286,6 +302,54 @@ func skillValueLabels(cfg *config.Config) []string {
 		if s, ok := cfg.Skills[name]; ok && strings.TrimSpace(s.Description) != "" {
 			labels[i] = s.Description
 		}
+	}
+	return labels
+}
+
+// resumeValueLabels annotates the /resume candidates with the session's
+// title summary and update time.
+func resumeValueLabels(kind string, limit int) []string {
+	sessions, err := session.List(kind, limit)
+	if err != nil {
+		return nil
+	}
+	labels := make([]string, len(sessions))
+	for i, s := range sessions {
+		label := s.Updated.Local().Format("01-02 15:04")
+		if msg := s.LastUserMessage(); msg != "" {
+			label += "  " + firstLine(msg)
+		} else if s.Agent != "" {
+			label += "  agent " + s.Agent
+		}
+		labels[i] = label
+	}
+	return labels
+}
+
+// themeValueLabels annotates the /theme candidates with the theme's color
+// swatches: colored blocks of the current mode's palette.
+func (app *AgentApp) themeValueLabels() []string {
+	names := themeNames()
+	labels := make([]string, len(names))
+	dark := app.model.DarkMode()
+	for i, name := range names {
+		t, ok := lookupTheme(name)
+		if !ok {
+			continue
+		}
+		v := t.Light
+		if dark {
+			v = t.Dark
+		}
+		block := lipgloss.NewStyle().Foreground(lipgloss.Color(v.Accent)).Render("●") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(v.Primary)).Render("●") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(v.Success)).Render("●") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(v.Warning)).Render("●") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color(v.Error)).Render("●")
+		if d := strings.TrimSpace(t.Description); d != "" {
+			block += " " + d
+		}
+		labels[i] = block
 	}
 	return labels
 }
@@ -342,7 +406,7 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 			if len(cfg.MCPServers) == 0 {
 				return CommandResult{Message: "配置中没有 MCP 服务（mcp_servers）", Error: true}
 			}
-			app.model.openMCPPanel(cfg, app.mcpDisabled, app.setMCPServer)
+			app.openMCPPanel()
 			return CommandResult{}
 		}
 		switch strings.ToLower(arg) {

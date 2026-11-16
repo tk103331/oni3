@@ -191,13 +191,12 @@ func (m *ViewModel) paletteItems() []paletteItem {
 			if argPrefix != "" && !strings.HasPrefix(strings.ToLower(v), strings.ToLower(argPrefix)) {
 				continue
 			}
-			value := v
-			if i < len(c.ValueLabels) && strings.TrimSpace(c.ValueLabels[i]) != "" {
-				value += "  " + c.ValueLabels[i]
+			label := ""
+			if i < len(c.ValueLabels) {
+				label = c.ValueLabels[i]
 			}
 			items = append(items, paletteItem{
-				line: lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent)).Bold(true).Render("/"+c.Name) +
-					m.muted().Render("  →  "+value),
+				line:     m.formatValueRow(c.Name, v, label),
 				fill:     "/" + c.Name + " " + v,
 				exec:     !c.KeepArgs,
 				complete: c.KeepArgs,
@@ -206,6 +205,21 @@ func (m *ViewModel) paletteItems() []paletteItem {
 		return items
 	}
 	return nil
+}
+
+// formatValueRow renders one argument candidate: the command name and the
+// value are emphasized (accent + bold), the annotation after it is muted.
+func (m *ViewModel) formatValueRow(command, value, label string) string {
+	head := lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Accent)).Bold(true).Render("/" + command)
+	valueStyled := lipgloss.NewStyle().Bold(true).Render(value)
+	width := maxInt(m.width-6, 10)
+	// The visible row is "  →  value  label"; emphasis stays on the value.
+	row := head + m.muted().Render("  →  ") + valueStyled
+	if strings.TrimSpace(label) != "" {
+		visible := lipgloss.Width(head) + 5 + lipgloss.Width(valueStyled) + 2
+		row += m.muted().Render("  " + truncate(label, maxInt(width-visible, 0)))
+	}
+	return row
 }
 
 // paletteUsage returns the usage line of the command currently being typed,
@@ -236,19 +250,13 @@ func (m *ViewModel) hasPalette() bool {
 	return m.paletteActive() && len(m.paletteItems()) > 0
 }
 
-// movePalette moves the palette selection (clamped, no wrap).
+// movePalette moves the palette selection, wrapping around at both ends.
 func (m *ViewModel) movePalette(delta int) {
 	items := m.paletteItems()
 	if len(items) == 0 {
 		return
 	}
-	m.paletteSel += delta
-	if m.paletteSel < 0 {
-		m.paletteSel = 0
-	}
-	if m.paletteSel >= len(items) {
-		m.paletteSel = len(items) - 1
-	}
+	m.paletteSel = ((m.paletteSel+delta)%len(items) + len(items)) % len(items)
 	m.markDirty()
 }
 

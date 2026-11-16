@@ -151,40 +151,41 @@ func TestMCPPanelOpensAndToggles(t *testing.T) {
 		t.Fatal("panel did not open")
 	}
 
-	// The panel lists both servers with state, tool count and label.
+	// The panel lists both servers with state, tool count, label and both
+	// summary rows.
 	out := m.View()
-	for _, want := range []string{"filesystem", "文件系统", "grep", "https://mcp.grep.app", "✓ 启用", "0 工具"} {
+	for _, want := range []string{"filesystem", "文件系统", "grep", "https://mcp.grep.app", "✓ 启用", "0 工具", "全部启用", "全部禁用"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("panel missing %q:\n%s", want, out)
 		}
 	}
 
-	// Enter on the first row disables filesystem.
-	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mcpPanelState != nil {
-		t.Fatal("panel should close after toggling")
+	// Space on the first row toggles filesystem and keeps the panel open.
+	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
+	if m.mcpPanelState == nil {
+		t.Fatal("panel should stay open after a space toggle")
 	}
 	ac, ok := app.effectiveAgentConfig()
 	if !ok || containsString(ac.MCPServers, "filesystem") {
-		t.Fatalf("filesystem should be disabled after panel toggle: %v", ac.MCPServers)
+		t.Fatalf("filesystem should be disabled after space toggle: %v", ac.MCPServers)
+	}
+	// The row state refreshes in place.
+	out = m.View()
+	if !strings.Contains(out, "⊘ 禁用") {
+		t.Fatalf("row state did not refresh:\n%s", out)
 	}
 
-	// Reopen: the disabled row is marked, and an enable-all row appears.
-	app.model.openMCPPanel(config.GetConfig(), app.mcpDisabled, app.setMCPServer)
-	out = app.model.View()
-	if !strings.Contains(out, "⊘ 禁用") || !strings.Contains(out, "全部启用") {
-		t.Fatalf("panel state after disable:\n%s", out)
-	}
-
-	// Esc closes without changing anything.
-	m = app.model
-	m = drive(m, tea.KeyMsg{Type: tea.KeyEsc})
-	if m.mcpPanelState != nil {
-		t.Fatal("Esc should close the panel")
-	}
+	// Space again re-enables it.
+	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
 	ac, _ = app.effectiveAgentConfig()
-	if containsString(ac.MCPServers, "filesystem") {
-		t.Fatal("Esc must not re-enable the server")
+	if !containsString(ac.MCPServers, "filesystem") {
+		t.Fatalf("filesystem should be re-enabled: %v", ac.MCPServers)
+	}
+
+	// Enter closes the panel.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mcpPanelState != nil {
+		t.Fatal("Enter should close the panel")
 	}
 }
 
@@ -192,20 +193,32 @@ func TestMCPPanelEnableAllRow(t *testing.T) {
 	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
 	app.executeSlash("mcp disable grep")
 
+	app.openMCPPanel()
 	m := app.model
-	app.model.openMCPPanel(config.GetConfig(), app.mcpDisabled, app.setMCPServer)
-	m = app.model
-	// Rows: filesystem, grep, 全部启用. Two downs select the last one.
+	// Rows: filesystem, grep, 全部启用, 全部禁用. Two downs select 全部启用.
 	for range 2 {
 		m = drive(m, tea.KeyMsg{Type: tea.KeyDown})
 	}
-	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.mcpPanelState != nil {
-		t.Fatal("panel should close after enable-all")
-	}
+	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
 	ac, ok := app.effectiveAgentConfig()
 	if !ok || len(ac.MCPServers) != 2 {
 		t.Fatalf("enable-all should restore both servers: %v", ac.MCPServers)
+	}
+}
+
+func TestMCPPanelDisableAllRow(t *testing.T) {
+	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
+
+	app.openMCPPanel()
+	m := app.model
+	// Three downs select 全部禁用.
+	for range 3 {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
+	ac, ok := app.effectiveAgentConfig()
+	if !ok || len(ac.MCPServers) != 0 {
+		t.Fatalf("disable-all should empty the server list: %v", ac.MCPServers)
 	}
 }
 
@@ -245,7 +258,7 @@ func TestSlashCommandsCarryValueLabels(t *testing.T) {
 	if model.KeepArgs {
 		t.Fatal("/model should execute immediately")
 	}
-	if len(model.ValueLabels) != len(model.Values) || !strings.Contains(strings.Join(model.ValueLabels, ","), "cloud/gpt-4o") {
+	if len(model.ValueLabels) != len(model.Values) || !strings.Contains(strings.Join(model.ValueLabels, ","), "cloud.gpt-4o") {
 		t.Fatalf("model labels = %v for values %v", model.ValueLabels, model.Values)
 	}
 	if len(agent.ValueLabels) != len(agent.Values) {

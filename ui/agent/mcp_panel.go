@@ -17,17 +17,26 @@ func minInt(a, b int) int {
 	return b
 }
 
+// openMCPPanel opens the management panel wired to this app's state.
+func (app *AgentApp) openMCPPanel() {
+	app.model.onMCPDisabled = func() map[string]bool { return app.mcpDisabled }
+	app.model.openMCPPanel(config.GetConfig(), app.mcpDisabled, app.setMCPServer)
+}
+
 // mcpPanel is the interactive /mcp management panel: one row per configured
-// server with its state, tool count and endpoint, plus an "enable all" row.
-// Enter toggles the selected server for the current session; the change is
-// runtime-only and the configuration file stays untouched.
+// server with its state, tool count and endpoint, plus "enable all" and
+// "disable all" rows. Space toggles the selected server for the current
+// session; Enter applies and closes. The change is runtime-only and the
+// configuration file stays untouched.
 type mcpPanel struct {
 	cfg  *config.Config
-	sel  int // selected row (server list, then the enable-all row)
+	sel  int // selected row (server list, then the summary rows)
 	rows []mcpRow
 	// onToggle applies an enable/disable pair and returns its result; it runs
 	// on the TUI update goroutine so rebuilds stay ordered.
 	onToggle func(server string, enable bool) CommandResult
+	// onChanged refreshes the command descriptions after a toggle.
+	onChanged func()
 }
 
 type mcpRow struct {
@@ -36,6 +45,12 @@ type mcpRow struct {
 	tools    int
 	label    string
 }
+
+// summary rows appended after the server rows.
+const (
+	mcpRowEnableAll  = "‹全部启用›"
+	mcpRowDisableAll = "‹全部禁用›"
+)
 
 func (m *ViewModel) openMCPPanel(cfg *config.Config, disabled map[string]bool, onToggle func(string, bool) CommandResult) {
 	if m.isWaiting || m.question != nil {
@@ -72,22 +87,67 @@ func (m *ViewModel) closeMCPPanel() {
 	m.markDirty()
 }
 
-// panelRows returns the server rows followed by the enable-all row.
+// panelRows returns the server rows followed by the enable-all/disable-all rows.
 func (p *mcpPanel) panelRows() []mcpRow {
 	rows := make([]mcpRow, len(p.rows))
 	copy(rows, p.rows)
-	// An extra synthetic row enables every disabled server at once.
-	allEnabled := true
-	for _, r := range p.rows {
-		if r.disabled {
-			allEnabled = false
-			break
+	return append(rows,
+		mcpRow{server: mcpRowEnableAll, label: mcpRowEnableAll},
+		mcpRow{server: mcpRowDisableAll, label: mcpRowDisableAll},
+	)
+}
+
+// toggleSelected flips the selected server's enabled state and keeps the
+// panel open so several servers can be toggled in a row.
+func (m *ViewModel) mcpToggleSelected() {
+	p := m.mcpPanelState
+	if p == nil || p.onToggle == nil {
+		return
+	}
+	rows := p.panelRows()
+	sel := min(max(p.sel, 0), len(rows)-1)
+	row := rows[sel]
+	switch row.server {
+	case mcpRowEnableAll:
+		for _, r := range p.rows {
+			if r.disabled {
+				p.onToggle(r.server, true)
+			}
 		}
+	case mcpRowDisableAll:
+		for _, r := range p.rows {
+			if !r.disabled {
+				p.onToggle(r.server, false)
+			}
+		}
+	default:
+		// Toggle: an enabled server turns off, a disabled one turns on.
+		res := p.onToggle(row.server, row.disabled)
+		m.applyCommandResult(res)
+		// Refresh the row state from the host's disabled set.
+		m.mcpRefreshRows()
 	}
-	if !allEnabled {
-		rows = append(rows, mcpRow{server: "", label: "全部启用"})
+}
+
+// mcpRefreshRows re-reads each row's disabled state after a toggle.
+func (m *ViewModel) mcpRefreshRows() {
+	p := m.mcpPanelState
+	if p == nil {
+		return
 	}
-	return rows
+	for i := range p.rows {
+		p.rows[i].disabled = m.mcpPanelDisabled()[p.rows[i].server]
+	}
+	m.markDirty()
+}
+
+// mcpPanelDisabled is set by the host so the panel can refresh after toggles.
+// It is nil until the host wires it in openMCPPanelHost.
+func (m *ViewModel) mcpPanelDisabled() map[string]bool {
+	if m.onMCPDisabled == nil {
+		return map[string]bool{}
+	}
+	return m.onMCPDisabled()
 }
 
 func (m *ViewModel) handleMCPPanelKey(msg tea.KeyMsg) tea.Cmd {
@@ -112,26 +172,13 @@ func (m *ViewModel) handleMCPPanelKey(msg tea.KeyMsg) tea.Cmd {
 			delta *= 5
 		}
 		p.sel = (p.sel + delta + len(rows)) % len(rows)
+	case tea.KeySpace:
+		m.mcpToggleSelected()
 	case tea.KeyEnter:
-		if len(rows) == 0 {
-			return nil
-		}
-		p.sel = min(max(p.sel, 0), len(rows)-1)
-		row := rows[p.sel]
-		if row.server == "" {
-			// The enable-all row.
-			m.closeMCPPanel()
-			for _, r := range p.rows {
-				if r.disabled && p.onToggle != nil {
-					p.onToggle(r.server, true)
-				}
-			}
-			return nil
-		}
-		enable := row.disabled
+		// Enter applies the current state and closes the panel.
 		m.closeMCPPanel()
-		if p.onToggle != nil {
-			m.applyCommandResult(p.onToggle(row.server, enable))
+		if p.onChanged != nil {
+			p.onChanged()
 		}
 		return nil
 	default:
@@ -148,7 +195,7 @@ func (m *ViewModel) mcpPanelLines() []string {
 		return nil
 	}
 	width := maxInt(m.width-2, 1)
-	lines := []string{m.primaryStyle(true).Render(truncate(" MCP 服务 · Enter 切换启用状态", width))}
+	lines := []string{m.primaryStyle(true).Render(truncate(" MCP 服务 · 空格切换启用 · Enter 关闭", width))}
 	rows := p.panelRows()
 	sel := min(max(p.sel, 0), len(rows)-1)
 	maxRows := minInt(8, maxInt(m.height-10, 1))
@@ -161,7 +208,7 @@ func (m *ViewModel) mcpPanelLines() []string {
 			marker = " ❯ "
 		}
 		text := r.server
-		if r.server == "" {
+		if r.server == mcpRowEnableAll || r.server == mcpRowDisableAll {
 			text = r.label
 		} else {
 			state := "✓ 启用"
@@ -173,11 +220,12 @@ func (m *ViewModel) mcpPanelLines() []string {
 		line := truncate(marker+oneLine(ansi.Strip(text)), width)
 		if i == sel {
 			line = m.accentStyle(true).Render(line)
-		} else if r.disabled && r.server != "" {
+		} else if r.disabled && r.server != mcpRowEnableAll && r.server != mcpRowDisableAll {
 			line = m.muted().Render(line)
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, m.muted().Render(truncate(" ↑↓ 选择 · Enter 启用/禁用 · Esc 关闭（仅本次会话生效）", width)))
+	hint := " ↑↓ 选择（首尾循环） · 空格 启用/禁用 · Enter 关闭 · Esc 取消（仅本次会话生效）"
+	lines = append(lines, m.muted().Render(truncate(hint, width)))
 	return lines
 }
