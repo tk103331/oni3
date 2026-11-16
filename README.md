@@ -1,4 +1,4 @@
-English
+English | [中文](README_CN.md)
 
 Oni3 is an intelligent AI Agent command-line tool based on the [CloudWeGo Eino](https://github.com/cloudwego/eino) framework. It provides a powerful Agent system with support for multiple tool integrations and various AI model providers, enabling you to easily build and run custom AI Agents.
 
@@ -7,12 +7,14 @@ Oni3 is an intelligent AI Agent command-line tool based on the [CloudWeGo Eino](
 - **Intelligent Agent System**: AI Agent based on ReAct pattern with tool calling and reasoning capabilities
 - **Interactive TUI**: Terminal UI for real-time conversations with agents, including slash commands, tool approval and session resume
 - **ACP Agent Mode**: Runs as an [Agent Client Protocol](https://agentclientprotocol.com) agent so editors like Zed can drive Oni3
+- **First-Run Onboarding**: Common providers ship as built-in presets; pick one, enter an API key and import its models without editing YAML
 - **Rich Tool Ecosystem**: Built-in various tools including search, browser, command line, HTTP requests, etc.
 - **Multi-Model Provider Support**: Supports OpenAI, Claude, Gemini, Qwen, DeepSeek, Ollama, Baidu Qianfan, ByteDance Doubao, and more
 - **Flexible Configuration System**: Manage agents, tools, models and skills through YAML configuration files
 - **Custom Tool Support**: Supports custom HTTP and command-line tools
 - **JavaScript Plugins**: Extend tools, lifecycle hooks, themes, agents, models and providers through embedded moejs ES modules
-- **MCP Server Integration**: Supports Model Context Protocol (MCP) servers with both SSE and STDIO transport
+- **MCP Client Integration**: Connects to Model Context Protocol (MCP) servers over SSE, streamable HTTP and STDIO
+- **MCP Server Mode**: Exposes `call_agent`, `list_agents` and `list_models` over stdio
 - **Langfuse Integration**: Built-in observability with Langfuse for monitoring and tracing
 
 ## Installation
@@ -81,10 +83,18 @@ go build -trimpath -ldflags="-s -w" -o oni3 .
 
 ### 1. Configuration File
 
-First, copy the configuration template and modify it as needed:
+On first run Oni3 creates a starter configuration at `~/.oni3/config.yml` (mode `0600`) and opens the interface. Common providers are built in, so the usual setup happens inside the TUI:
+
+1. Start Oni3. With no models configured, the provider picker opens automatically.
+2. Choose a provider and enter its API key (masked input).
+3. Fetch the provider's model list, then import a single model (and switch to it immediately) or all of them.
+
+The same flow is available later through `/provider`. Built-in presets include OpenAI, Anthropic, Gemini, DeepSeek, Qwen (China/international), Kimi (China/international), Zhipu GLM, MiniMax (China/international), Ark/Doubao, Qianfan, SiliconFlow, OpenRouter, Groq, xAI, Mistral, Together, Fireworks, ModelScope, Ollama, LM Studio and magpie.
+
+Verified API keys and imported models are stored in private state under `~/.oni3/state/` (`0600`); Oni3 never rewrites `config.yml`. Edit the file for custom endpoints, pinned model settings, agents and tools. `config.yml.example` is a complete reference:
 
 ```bash
-cp config.yml.example config.yml
+cp config.yml.example ~/.oni3/config.yml
 ```
 
 The configuration file contains the following main sections:
@@ -112,14 +122,17 @@ The TUI supports slash commands (type `/` to see the command palette with argume
 | `/skill <name>` | Select a configured skill; `/skill off` clears the selection |
 | `/resume [id\|#]` | List or resume saved sessions (conversation context is restored) |
 | `/theme <name> [light\|dark]` | Switch color theme (every theme ships light and dark variants): `violet` (default), `catppuccin`, `nord`, `gruvbox`, `tokyo-night`, `dracula`, `mono` |
+| `/mcp [enable\|disable] [name\|all]` | Open the MCP server management panel, or toggle servers for the current session |
 | `/tools` | List available tools |
 | `/status` | Show current agent/model/skill/session |
 
 Switching the model with `/model` is remembered: the choice is stored per agent in `~/.oni3/agent_models.json` and restored on the next start. This only applies to agents whose configured model is the default model (`default_model`, or the first model when it is unset); an agent that pins its own `model:` in `config.yml` always keeps it.
 
-The header shows the active agent and model (`Eino / Eino · qwen-local`) and updates after `/agent`, `/model` or `/resume`. Narrow terminals keep the status visible by shortening the label. The input stays at the bottom with contextual keyboard hints. Selected thinking, tool and error rows use a slim left marker instead of a background fill.
+The header is two rows: the ONI3 wordmark beside the active agent and model (`OniThree · qwen-local`), and the abbreviated working directory plus status below it. It updates after `/agent`, `/model` or `/resume`. Narrow terminals drop the wordmark and shorten the label so the status stays visible. The input stays at the bottom with contextual keyboard hints. Selected thinking, tool and error rows use a slim left marker instead of a background fill.
 
 While a reply is streaming, press `Esc` twice to stop it: the first press only arms the hint, the second one within two seconds cancels the run and keeps whatever streamed so far.
+
+While a turn runs, the TUI reports `idle`/`working`/`blocked`/`done`/`error` to the terminal via OSC 7501 (Program Status Protocol). Terminals that support it can show the state in a tab or status bar; others ignore the sequence.
 
 The TUI does **not capture the mouse** by default, so native terminal text selection and copy work. It also enables the terminal's alternate-scroll mode (DECSET 1007), so on supported terminals (iTerm2, Kitty, WezTerm, xterm, ...) the wheel scrolls the transcript without any key press. If 1007 is unsupported, use ↑↓/PgUp/PgDn, or press `Ctrl+Y` to capture the mouse (press again to release). With mouse capture on, clicking a thinking, tool-call or error line expands/folds it (the same as `Tab` + `Ctrl+O`). Errors start folded to their first line.
 
@@ -191,7 +204,7 @@ oni3 agent --agent search_agent
 ```
 
 Parameter description:
-- `--agent, -a`: Specify the agent name to run (optional; defaults to the last used agent or the built-in `Eino`)
+- `--agent, -a`: Specify the agent name to run (optional; defaults to the last used agent or the built-in `onthree` agent, displayed as OniThree)
 
 ### 3. Running an Agent
 
@@ -205,9 +218,9 @@ Parameter description:
 - `--agent, -a`: Specify the Agent name to run (required)
 - `--prompt, -p`: Specify the input prompt for the Agent (required)
 - `--config`: Specify the configuration file path (optional, defaults to ~/.oni3/config.yml)
-- `--cwd, -C`: Run in this working directory (optional, defaults to the current one). Tools resolve relative paths against it, e.g. `eino -C ~/project`
+- `--cwd, -C`: Run in this working directory (optional, defaults to the current one). Tools resolve relative paths against it, e.g. `oni3 -C ~/project`
 
-The directory can also be a positional argument: `eino ~/project`, `eino agent ~/project`. Passing both `--cwd` and a positional directory is an error. `run` keeps its flag-only interface.
+The directory can also be a positional argument: `oni3 ~/project`, `oni3 agent ~/project`. Passing both `--cwd` and a positional directory is an error. `run` keeps its flag-only interface.
 
 ### 4. ACP Agent Mode (for editors like Zed)
 
@@ -218,12 +231,12 @@ It speaks JSON-RPC 2.0 over stdio, so any ACP client (Zed, or your own tooling) 
 # Expose an agent over ACP
 oni3 acp --agent search_agent
 
-# Without --agent the built-in Eino agent is served (the same default as
-# `oni3` / `eino agent`); only a configured model is required
+# Without --agent the built-in OniThree agent is served (the same default as
+# `oni3` / `oni3 agent`); only a configured model is required
 oni3 acp
 ```
 
-In ACP mode the built-in agent does not enable `ask_user` / `todo_list`, since both need an interactive UI.
+In ACP mode `ask_user` and `todo_list` are bridged to the client instead of being disabled: questions arrive as `session/request_permission` dialogs, and task lists appear as ACP plan updates. Dangerous tool calls ask the client for permission in the same way.
 
 Example Zed configuration (`settings.json`):
 
@@ -231,7 +244,7 @@ Example Zed configuration (`settings.json`):
 {
   "agent": {
     "profiles": {
-      "eino": {
+      "oni3": {
         "provider": "acp",
         "name": "oni3",
         "command": "oni3",
@@ -244,14 +257,71 @@ Example Zed configuration (`settings.json`):
 
 Supported ACP surface:
 
-- `initialize`, `session/new`, `session/prompt`, `session/cancel` (protocol v1)
-- Streaming `session/update` notifications: `agent_message_chunk`, `tool_call`, `tool_call_update`
+- `initialize`, `session/new`, `session/prompt`, `session/cancel`, `session/set_config_option` (protocol v1)
+- Session management: `session/list`, `session/load`, `session/resume` and `session/close`. ACP conversations persist to the same `~/.oni3/sessions/*.jsonl` store as the TUI, so text, reasoning and tool calls survive restarts and can be resumed from either side.
+- Streaming `session/update` notifications: `agent_message_chunk`, `tool_call`, `tool_call_update`, `plan`, `available_commands_update` and `config_option_update`
+- Slash commands advertised to the client: `/clear`, `/model`, `/tools` and `/status`, plus `/skill` when skills are configured. Prompts starting with `/` are answered directly instead of being sent to the model.
+- Model and skill selectors through `session/set_config_option`; live changes are pushed back with `config_option_update` and persisted with the session.
+- `ask_user` bridged to `session/request_permission`, `todo_list` to ACP plan entries, and dangerous tool calls to the client's permission UI
 - Stop reasons: `end_turn` and `cancelled`
 - Tools from `config.yml` (built-in tools and MCP servers) are exposed as ACP tool calls with status (`pending`/`in_progress`/`completed`/`failed`) and kind (`search`, `execute`, `fetch`, ...)
 
 Note: logs are written to `~/.oni3/oni3.log` — stdout of the `acp` command is reserved for the protocol.
 
-### 5. Configuration Example
+### 5. MCP Server Mode
+
+Run Oni3 itself as a Model Context Protocol server. It exposes three tools:
+
+```bash
+oni3 mcp
+```
+
+- `call_agent(agent, prompt, model?)` runs any configured agent, including the built-in OniThree agent
+- `list_agents()` returns the agent names, descriptions and default model aliases
+- `list_models()` returns the model alias IDs and `default_model`
+
+`call_agent` parameters:
+
+- `agent` (required): a name returned by `list_agents`
+- `prompt` (required): the task for the agent
+- `model` (optional): a model alias for this run; omit it to use the agent's default model
+
+`list_agents()` returns:
+
+```json
+{"agents": [{"name": "helper", "description": "Help with small tasks", "default_model": "alpha"}]}
+```
+
+`list_models()` returns:
+
+```json
+{"default_model": "alpha", "models": ["alpha", "zeta"]}
+```
+
+Example `call_agent` arguments:
+
+```json
+{"agent": "search_agent", "prompt": "Search for today's weather", "model": "alpha"}
+```
+
+Each call runs a fresh, single-turn agent conversation and returns its final answer.
+
+stdout is reserved for the protocol; logs go to `~/.oni3/oni3.log`.
+
+Example client configuration:
+
+```json
+{
+  "mcpServers": {
+    "oni3": {
+      "command": "oni3",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### 6. Configuration Example
 
 Here's a complete configuration example:
 
@@ -401,7 +471,7 @@ Oni3 comes with various built-in tools that can be used in Agents:
 
 ### JavaScript execution
 
-The built-in Eino agent includes the `javascript` tool. To use it with a configured agent, declare it and include its name in that agent's `tools`:
+The built-in OniThree agent includes the `javascript` tool. To use it with a configured agent, declare it and include its name in that agent's `tools`:
 
 ```yaml
 tools:
@@ -490,14 +560,11 @@ Questions and task snapshots are persisted in the session file as `question` / `
 
 ## Supported Model Providers
 
-- **OpenAI**: GPT-3.5, GPT-4 series
-- **Anthropic Claude**: Claude 3 series
-- **Google Gemini**: Gemini Pro series
-- **Alibaba Qwen**: Qwen series
-- **DeepSeek**: DeepSeek series
-- **ByteDance Doubao**: Through Ark API
-- **Baidu Qianfan**: ERNIE and others
-- **Ollama**: Local model deployment
+- **Direct SDK types**: `openai`, `anthropic`, `gemini`, `qwen`, `qianfan`, `ark`, `deepseek` and `ollama`
+- **OpenAI-compatible presets**: OpenAI, Gemini (compatible endpoint), Kimi, Zhipu GLM, MiniMax, SiliconFlow, OpenRouter, Groq, xAI, Mistral, Together, Fireworks, ModelScope, LM Studio and magpie
+- **Local models**: Ollama, LM Studio and other OpenAI-compatible local servers (API key optional)
+
+Any other OpenAI-compatible endpoint can be added under `providers` with `type: openai` and a `base_url`.
 
 ## Main Dependencies
 

@@ -91,8 +91,8 @@ func Error(category, message string) {
 // debug is the internal logging function (renamed to avoid conflict)
 func (l *Logger) debug(level LogLevel, category, message string) {
 	if l == nil {
-		// Fallback to console if logger not initialized
-		fmt.Printf("[%s] %s: %s\n", levelString(level), category, message)
+		// Fallback to stderr: stdout may carry a protocol (ACP/MCP).
+		fmt.Fprintf(os.Stderr, "[%s] %s: %s\n", levelString(level), category, message)
 		return
 	}
 

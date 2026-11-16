@@ -4,7 +4,7 @@ Installs the [Oni3](https://github.com/tk103331/oni3) binary for your platform
 and exposes the `oni3` command.
 
 ```bash
-npm install -g oni3
+npm install -g @tk103331/oni3
 
 oni3                 # interactive TUI (last agent / built-in agent)
 oni3 agent --agent minimax_agent

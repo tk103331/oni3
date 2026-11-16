@@ -79,17 +79,20 @@ The same directory can be given with --cwd/-C.`,
 			fmt.Fprintf(os.Stderr, "Note: built-in agent unavailable: %v\n", err)
 		}
 
-		// Asynchronously initialize MCP manager (does not block command execution)
-		go func() {
-			// Use command context for cancellation when command ends
-			ctx := cmd.Context()
-			if ctx == nil {
-				ctx = context.Background()
-			}
-			if err := mcp.InitializeGlobalManager(ctx, cfg); err != nil {
-				fmt.Fprintf(os.Stderr, "Failed to initialize MCP manager asynchronously: %v\n", err)
-			}
-		}()
+		// The MCP server mode resolves tools immediately and initializes the
+		// manager itself. Other commands keep the non-blocking startup.
+		if cmd.Name() != "mcp" {
+			go func() {
+				// Use command context for cancellation when command ends
+				ctx := cmd.Context()
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				if err := mcp.InitializeGlobalManager(ctx, cfg); err != nil {
+					fmt.Fprintf(os.Stderr, "Failed to initialize MCP manager asynchronously: %v\n", err)
+				}
+			}()
+		}
 
 		return nil
 	},

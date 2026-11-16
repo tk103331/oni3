@@ -7,12 +7,14 @@ Oni3 是一个基于 [CloudWeGo Eino](https://github.com/cloudwego/eino) 框架�
 - **智能 Agent 系统**：基于 ReAct 模式的 AI Agent，支持工具调用和推理
 - **交互式 TUI**：基于 TUI 的终端界面，可与 Agent 实时对话，支持斜杠命令、工具审批与会话恢复
 - **ACP Agent 模式**：可作为 [Agent Client Protocol](https://agentclientprotocol.com) Agent 运行，供 Zed 等编辑器接入
+- **首次运行引导**：内置常用 provider 预设，在界面中选择、输入 API Key 并导入模型，无需编辑 YAML
 - **丰富的工具生态**：内置多种工具，包括搜索、浏览器、命令行、HTTP 请求等
 - **多模型提供商支持**：支持 OpenAI、Claude、Gemini、Qwen、DeepSeek、Ollama、百度千帆、字节跳动豆包等
 - **灵活的配置系统**：通过 YAML 配置文件管理 Agent、工具、模型与 skill
 - **自定义工具支持**：支持自定义 HTTP 和命令行工具
 - **JavaScript 插件**：通过内嵌 moejs 运行 ES module，扩展 tools、hooks、themes、agents、models 和 providers
-- **MCP 服务器集成**：支持 Model Context Protocol (MCP) 服务器，包括 SSE 和 STDIO 传输
+- **MCP 客户端集成**：连接 Model Context Protocol (MCP) 服务器，支持 SSE、streamable HTTP 与 STDIO 传输
+- **MCP 服务端模式**：通过 stdio 提供 `call_agent`、`list_agents` 与 `list_models`
 - **Langfuse 集成**：内置 Langfuse 可观测性支持，用于监控和追踪
 
 ## 安装
@@ -30,7 +32,7 @@ go install github.com/tk103331/oni3@latest
 **npm**：
 
 ```bash
-npm install -g oni3    # 提供 oni3 命令
+npm install -g @tk103331/oni3    # 提供 oni3 命令
 oni3
 ```
 
@@ -81,10 +83,18 @@ go build -trimpath -ldflags="-s -w" -o oni3 .
 
 ### 1. 配置文件
 
-首先，复制配置文件模板并根据需要进行修改：
+首次运行时，Oni3 会在 `~/.oni3/config.yml` 创建起始配置（权限 `0600`）并进入界面。常用 provider 已内置，通常的设置都可以在 TUI 中完成：
+
+1. 启动 Oni3。尚未配置模型时会自动打开 provider 选择面板。
+2. 选择 provider，输入 API Key（遮罩显示）。
+3. 获取模型列表后，可添加单个模型（并立即切换）或全部添加。
+
+之后也可以随时通过 `/provider` 使用同样流程。内置预设包括 OpenAI、Anthropic、Gemini、DeepSeek、通义千问（国内/国际）、Kimi（国内/国际）、智谱 GLM、MiniMax（国内/国际）、火山方舟/豆包、百度千帆、SiliconFlow、OpenRouter、Groq、xAI、Mistral、Together、Fireworks、ModelScope、Ollama、LM Studio 与 magpie。
+
+验证通过的 API Key 和导入的模型保存在 `~/.oni3/state/` 下的私有状态文件（`0600`）；Oni3 不会改写 `config.yml`。仅在需要自定义接口、固定模型参数、agent 或工具时编辑该文件。`config.yml.example` 是完整参考：
 
 ```bash
-cp config.yml.example config.yml
+cp config.yml.example ~/.oni3/config.yml
 ```
 
 配置文件包含以下主要部分：
@@ -110,14 +120,17 @@ TUI 内支持斜杠命令（输入 `/` 会显示命令面板与参数候选）�
 | `/skill <name>` | 选择配置中的 skill；`/skill off` 取消选择 |
 | `/resume [id\|编号]` | 列出或恢复历史会话（会一并恢复对话上下文） |
 | `/theme <name> [light\|dark]` | 切换颜色主题（每套主题均含明暗两套配色）：`violet`（默认）、`catppuccin`、`nord`、`gruvbox`、`tokyo-night`、`dracula`、`mono` |
+| `/mcp [enable\|disable] [name\|all]` | 打开 MCP 服务管理面板，或在本次会话中启用/禁用服务 |
 | `/tools` | 列出当前可用工具 |
 | `/status` | 显示当前 agent/model/skill/会话 |
 
 用 `/model` 切换的模型会被记住：按 agent 保存在 `~/.oni3/agent_models.json`，下次启动自动沿用。只有「模型为默认模型」的 agent 会记住（`default_model`，未设置时取排序第一个模型）；在 `config.yml` 中为 agent 显式指定了 `model:` 的，始终以配置为准。
 
-顶栏显示当前 `agent · 模型`（如 `Eino / Eino · qwen-local`），`/agent`、`/model`、`/resume` 切换后立即更新；终端过窄时优先保留右侧状态。输入框固定在底部，快捷键提示随当前操作调整。选中的思考、工具和错误行以左侧细线标记，不再铺满背景色。
+顶栏为两行：第一行是 ONI3 字标与当前 agent/模型（如 `OniThree · qwen-local`），第二行是缩写后的工作目录与状态。`/agent`、`/model`、`/resume` 切换后立即更新；终端过窄时会隐藏字标并缩短标签，优先保留右侧状态。输入框固定在底部，快捷键提示随当前操作调整。选中的思考、工具和错误行以左侧细线标记，不再铺满背景色。
 
 回复生成过程中按两次 `Esc` 可停止：第一次只显示提示，两秒内再按一次即取消本次回复，已生成的内容会保留。
+
+回复进行中，TUI 会通过 OSC 7501（Program Status Protocol）向终端上报 `idle`/`working`/`blocked`/`done`/`error` 状态；支持的终端可在标签页或状态栏显示，其他终端会忽略该序列。
 
 TUI 默认**不捕获鼠标**，可直接用终端鼠标选择并复制文本；同时自动开启终端「备用屏幕滚轮转发」（DECSET 1007），在支持的终端（iTerm2、Kitty、WezTerm、xterm 等）中滚轮可直接滚动对话，无需按键。若终端不支持 1007，可用 ↑↓/PgUp/PgDn，或按 `Ctrl+Y` 开启鼠标捕获（再按一次关闭）。开启捕获后，点击思考块、工具调用行或错误行即可展开/折叠（等同于 `Tab` + `Ctrl+O`）；错误默认折叠为第一行。
 
@@ -190,7 +203,7 @@ oni3 agent --agent search_agent
 ```
 
 参数说明：
-- `--agent, -a`: 指定要运行的 agent 名称（可选，默认上次使用的 agent 或内置 Eino）
+- `--agent, -a`: 指定要运行的 agent 名称（可选，默认上次使用的 agent 或内置 `onthree` agent，显示为 OniThree）
 
 ### 3. 运行 Agent
 
@@ -204,9 +217,9 @@ oni3 run --agent test_agent --prompt "你好，请帮我搜索一下今天的天
 - `--agent, -a`: 指定要运行的 Agent 名称（必需）
 - `--prompt, -p`: 指定 Agent 的输入提示（必需）
 - `--config`: 指定配置文件路径（可选，默认为 ~/.oni3/config.yml）
-- `--cwd, -C`: 指定工作目录（可选，默认为当前目录）。工具的相对路径以此为基准，如 `eino -C ~/project`
+- `--cwd, -C`: 指定工作目录（可选，默认为当前目录）。工具的相对路径以此为基准，如 `oni3 -C ~/project`
 
-也可以直接作为位置参数：`eino ~/project`、`eino agent ~/project`。同时给出 `--cwd` 和位置参数会报错；`run` 子命令仍只使用参数形式。
+也可以直接作为位置参数：`oni3 ~/project`、`oni3 agent ~/project`。同时给出 `--cwd` 和位置参数会报错；`run` 子命令仍只使用参数形式。
 
 ### 4. ACP Agent 模式（供 Zed 等编辑器接入）
 
@@ -217,12 +230,12 @@ oni3 run --agent test_agent --prompt "你好，请帮我搜索一下今天的天
 # 以 ACP 方式暴露某个 agent
 oni3 acp --agent search_agent
 
-# 不指定 --agent 时使用内置的 `onthree` agent（与 `oni3` / `eino agent` 的默认 agent 相同），
+# 不指定 --agent 时使用内置的 `onthree` agent（与 `oni3` / `oni3 agent` 的默认 agent 相同），
 # 只要配置了模型即可直接使用
 oni3 acp
 ```
 
-内置 agent 在 ACP 模式下不启用 `ask_user` / `todo_list`（这两个工具依赖交互界面）。
+ACP 模式下 `ask_user` 与 `todo_list` 不再被禁用，而是桥接到客户端：提问以 `session/request_permission` 对话框呈现，任务列表作为 ACP plan 更新显示；危险工具调用也通过同一机制向客户端申请权限。
 
 Zed 配置示例（`settings.json`）：
 
@@ -230,7 +243,7 @@ Zed 配置示例（`settings.json`）：
 {
   "agent": {
     "profiles": {
-      "eino": {
+      "oni3": {
         "provider": "acp",
         "name": "oni3",
         "command": "oni3",
@@ -243,14 +256,71 @@ Zed 配置示例（`settings.json`）：
 
 支持的 ACP 能力：
 
-- `initialize`、`session/new`、`session/prompt`、`session/cancel`（协议 v1）
-- 流式 `session/update` 通知：`agent_message_chunk`、`tool_call`、`tool_call_update`
+- `initialize`、`session/new`、`session/prompt`、`session/cancel`、`session/set_config_option`（协议 v1）
+- 会话管理：`session/list`、`session/load`、`session/resume`、`session/close`。ACP 会话与 TUI 共用 `~/.oni3/sessions/*.jsonl`，文本、思考和工具调用都会持久化，重启后仍可从任意一侧恢复。
+- 流式 `session/update` 通知：`agent_message_chunk`、`tool_call`、`tool_call_update`、`plan`、`available_commands_update`、`config_option_update`
+- 向客户端公布的斜杠命令：`/clear`、`/model`、`/tools`、`/status`；配置了 skill 时还会公布 `/skill`。以 `/` 开头的 prompt 会直接应答，不发送给模型。
+- 通过 `session/set_config_option` 切换模型与 skill；变更通过 `config_option_update` 推送并随会话持久化。
+- `ask_user` 桥接为 `session/request_permission`，`todo_list` 桥接为 ACP plan 条目，危险工具调用交由客户端权限界面确认
 - 停止原因：`end_turn` 与 `cancelled`
 - `config.yml` 中配置的工具（内置工具与 MCP 服务）会以 ACP 工具调用形式暴露，带状态（`pending`/`in_progress`/`completed`/`failed`）与类型（`search`、`execute`、`fetch` 等）
 
 注意：日志写入 `~/.oni3/oni3.log`——`acp` 命令的 stdout 专用于协议通信。
 
-### 5. 配置示例
+### 5. MCP 服务端模式
+
+将 Oni3 本身作为 Model Context Protocol 服务器运行，提供三个工具：
+
+```bash
+oni3 mcp
+```
+
+- `call_agent(agent, prompt, model?)`：运行任意已配置 agent，包括内置 OniThree
+- `list_agents()`：返回 agent 名称、描述和默认模型别名
+- `list_models()`：返回模型别名 ID 列表和 `default_model`
+
+`call_agent` 参数：
+
+- `agent`（必填）：`list_agents` 返回的 agent 名称
+- `prompt`（必填）：交给该 agent 的任务
+- `model`（可选）：本次调用使用的模型别名；省略时使用该 agent 的默认模型
+
+`list_agents()` 返回：
+
+```json
+{"agents": [{"name": "helper", "description": "帮助处理小任务", "default_model": "alpha"}]}
+```
+
+`list_models()` 返回：
+
+```json
+{"default_model": "alpha", "models": ["alpha", "zeta"]}
+```
+
+`call_agent` 参数示例：
+
+```json
+{"agent": "search_agent", "prompt": "搜索今天的天气", "model": "alpha"}
+```
+
+每次调用都会开启一个新的单轮 agent 对话，并返回最终回答。
+
+stdout 专用于协议通信，日志写入 `~/.oni3/oni3.log`。
+
+客户端配置示例：
+
+```json
+{
+  "mcpServers": {
+    "oni3": {
+      "command": "oni3",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### 6. 配置示例
 
 以下是一个完整的配置示例：
 
@@ -474,7 +544,7 @@ plugins:
 完整示例见 [demo.js](examples/plugins/demo.js)，加载配置见 [demo.yml](examples/plugins/demo.yml)，详细接口见 [插件开发文档](docs/plugins.md)。示例使用已安装 `qwen3` 的本地 Ollama：
 
 ```bash
-eino --config examples/plugins/demo.yml agent --agent demo__helper
+oni3 --config examples/plugins/demo.yml agent --agent demo__helper
 ```
 
 ### 交互工具（agent 模式自动启用）
@@ -495,14 +565,11 @@ tools:
 
 ## 支持的模型提供商
 
-- **OpenAI**: GPT-3.5, GPT-4 系列
-- **Anthropic Claude**: Claude 3 系列
-- **Google Gemini**: Gemini Pro 系列
-- **阿里云通义千问**: Qwen 系列
-- **DeepSeek**: DeepSeek 系列
-- **字节跳动豆包**: 通过 Ark API
-- **百度千帆**: 文心一言等
-- **Ollama**: 本地模型部署
+- **直接 SDK 类型**：`openai`、`anthropic`、`gemini`、`qwen`、`qianfan`、`ark`、`deepseek` 与 `ollama`
+- **OpenAI 兼容预设**：OpenAI、Gemini（兼容接口）、Kimi、智谱 GLM、MiniMax、SiliconFlow、OpenRouter、Groq、xAI、Mistral、Together、Fireworks、ModelScope、LM Studio 与 magpie
+- **本地模型**：Ollama、LM Studio 及其他 OpenAI 兼容本地服务（API Key 可选）
+
+其他 OpenAI 兼容接口可在 `providers` 下以 `type: openai` 和 `base_url` 添加。
 
 ## 主要依赖
 
