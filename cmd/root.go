@@ -64,7 +64,7 @@ The same directory can be given with --cwd/-C.`,
 		}
 		if created {
 			fmt.Fprintf(os.Stderr, "Created a starter configuration at %s\n", configPath)
-			fmt.Fprintln(os.Stderr, "Add a provider there, then run /provider inside Oni3 to enter its API key and import models.")
+			fmt.Fprintln(os.Stderr, "Oni3 ships built-in providers: pick one in the provider list to enter an API key and import models. Edit the file only for custom endpoints.")
 		}
 
 		// Load configuration file

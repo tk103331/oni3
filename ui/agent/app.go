@@ -95,7 +95,7 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	agentModel.SetOnInterrupt(app.Interrupt)
 	app.registerCommands()
 	if app.currentModelName() == "" {
-		agentModel.appendCommandMessage("输入 /provider 选择提供商并添加第一个模型", false)
+		agentModel.appendCommandMessage("还没有配置模型：请选择一个 provider，填写 API Key 后导入模型（也可随时输入 /provider）", false)
 	}
 
 	// Create Bubble Tea program
@@ -158,7 +158,24 @@ func (app *AgentApp) toggleMouse() bool {
 // Run runs the Agent application
 func (app *AgentApp) Run() error {
 	defer app.model.closeProvider()
+	app.openFirstRunProvider()
 	return runTUI(app.program)
+}
+
+// openFirstRunProvider opens the provider picker when no model is configured,
+// so a fresh install can choose a built-in provider, enter its API key and
+// import the first model without editing the configuration file. It reports
+// whether the picker was opened.
+func (app *AgentApp) openFirstRunProvider() bool {
+	if app.model == nil || app.currentModelName() != "" {
+		return false
+	}
+	cfg := config.GetConfig()
+	if cfg == nil || len(cfg.Providers) == 0 {
+		return false
+	}
+	app.model.openProvider(cfg, app.ctx, "", app.addProviderModels)
+	return app.model.provider != nil
 }
 
 // runTUI starts the bubbletea program with wheel scrolling via the terminal's

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestSlashPalette(t *testing.T) {
@@ -234,6 +235,24 @@ func TestPaletteEnterSubLevelAndBottomInput(t *testing.T) {
 	inputIdx := strings.LastIndex(out, "╭")
 	if helpIdx < 0 || inputIdx < 0 || helpIdx < inputIdx {
 		t.Fatalf("help bar should be below the input box (input=%d help=%d)", inputIdx, helpIdx)
+	}
+}
+
+func TestPaletteHintAboveCandidates(t *testing.T) {
+	m := paletteTestModel(t, SlashCommand{
+		Name: "model", Args: "<name>", Description: "切换模型",
+		Values: []string{"alpha", "beta"}, ValueLabels: []string{"cloud · m", "cloud · n"},
+	})
+	m = drive(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/model ")})
+	lines := m.paletteView()
+	if len(lines) < 3 {
+		t.Fatalf("palette lines = %v", lines)
+	}
+	if hint := ansi.Strip(lines[0]); !strings.Contains(hint, "/model") || !strings.Contains(hint, "↑↓ 选择") {
+		t.Fatalf("first line is not the hint: %q", hint)
+	}
+	if row := ansi.Strip(lines[1]); !strings.Contains(row, "alpha") {
+		t.Fatalf("candidates should start right under the hint: %q", row)
 	}
 }
 

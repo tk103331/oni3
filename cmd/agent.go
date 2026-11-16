@@ -58,13 +58,9 @@ func ensureBuiltinAgent(cfg *config.Config) (string, error) {
 		return builtinAgentName, nil
 	}
 
+	// A first run has providers but no models yet: the built-in agent is still
+	// created so the interface can open the provider picker.
 	model := cfg.DefaultModelName()
-	if model == "" && len(cfg.Providers) == 0 {
-		if cfg.SourcePath != "" {
-			return "", fmt.Errorf("没有可用的模型配置：请在 %s 中添加 providers 或 models", cfg.SourcePath)
-		}
-		return "", fmt.Errorf("没有可用的模型配置：请在 config.yml 中添加 providers 或 models")
-	}
 
 	if cfg.Tools == nil {
 		cfg.Tools = make(map[string]config.Tool)

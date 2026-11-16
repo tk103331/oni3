@@ -3,10 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/models"
@@ -22,6 +24,32 @@ const (
 	providerFailed
 )
 
+// paneFocus is the pane that owns the arrow keys while models are listed:
+// the action bar on top, or the model list below it.
+type paneFocus uint8
+
+const (
+	paneFocusActions paneFocus = iota
+	paneFocusList
+)
+
+// providerModelActions are the top action bar entries of the model stage.
+const (
+	providerActionSelectAll = "全部选中"
+	providerActionClearAll  = "全部取消"
+	providerActionAddAll    = "添加全部"
+	providerActionAddPicked = "添加选中"
+)
+
+func providerModelActionNames() []string {
+	return []string{
+		providerActionSelectAll,
+		providerActionClearAll,
+		providerActionAddAll,
+		providerActionAddPicked,
+	}
+}
+
 // This modal owns its secret separately from the chat input. It is never
 // recorded as a user message, command, ask_user answer or session event.
 type providerState struct {
@@ -34,9 +62,15 @@ type providerState struct {
 	keyCursor    int
 	candidateKey string
 	models       []models.DiscoveredModel
-	failure      string
-	cancel       context.CancelFunc
-	onAdd        func(string, []string, bool) CommandResult
+	// picked holds the model IDs marked with space in the model stage.
+	picked map[string]bool
+	focus  paneFocus
+	action int // selected entry of the model action bar
+	// savedKey reports that a key typed in this flow is now persisted.
+	savedKey bool
+	failure  string
+	cancel   context.CancelFunc
+	onAdd    func(string, []string, bool) CommandResult
 }
 
 type providerModelsMsg struct {
@@ -46,9 +80,10 @@ type providerModelsMsg struct {
 }
 
 type providerOption struct {
-	label string
-	value string
-	all   bool
+	label  string
+	value  string
+	name   string // emphasized part of the row (provider name)
+	detail string // muted annotation (endpoint and description)
 }
 
 func (m *ViewModel) openProvider(cfg *config.Config, ctx context.Context, name string, onAdd func(string, []string, bool) CommandResult) CommandResult {
@@ -143,10 +178,33 @@ func (m *ViewModel) receiveProviderModels(msg providerModelsMsg) {
 			return
 		}
 		p.candidateKey = ""
+		p.savedKey = true
 	}
-	p.models, p.stage, p.sel = msg.models, providerModels, 1 // default to one model
+	p.models, p.stage, p.sel = msg.models, providerModels, 0 // default to the first model
+	p.picked = map[string]bool{}
+	p.focus, p.action = paneFocusList, 0
 	m.input, m.cursor = "", 0
 	m.markDirty()
+}
+
+// pickedIDs returns the marked model IDs in discovery order.
+func (p *providerState) pickedIDs() []string {
+	ids := make([]string, 0, len(p.picked))
+	for _, model := range p.models {
+		if p.picked[model.ID] {
+			ids = append(ids, model.ID)
+		}
+	}
+	return ids
+}
+
+// allIDs returns every discovered model ID in discovery order.
+func (p *providerState) allIDs() []string {
+	ids := make([]string, 0, len(p.models))
+	for _, model := range p.models {
+		ids = append(ids, model.ID)
+	}
+	return ids
 }
 
 func (m *ViewModel) closeProvider() {
@@ -164,24 +222,58 @@ func (m *ViewModel) closeProvider() {
 	m.markDirty()
 }
 
+// providerChooseOrder lists providers for the picker: the built-in catalog
+// order first (the vendors most users start with), then custom and plugin
+// providers alphabetically.
+func providerChooseOrder(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	rank := make(map[string]int)
+	for i, preset := range config.BuiltinProviders() {
+		rank[preset.Name] = i
+	}
+	names := sortedKeys(cfg.Providers)
+	sort.SliceStable(names, func(i, j int) bool {
+		ri, iBuiltin := rank[names[i]]
+		rj, jBuiltin := rank[names[j]]
+		switch {
+		case iBuiltin && jBuiltin:
+			return ri < rj
+		case iBuiltin:
+			return true
+		case jBuiltin:
+			return false
+		}
+		return names[i] < names[j]
+	})
+	return names
+}
+
 func (p *providerState) options(filter string) []providerOption {
 	filter = strings.ToLower(strings.TrimSpace(filter))
 	var result []providerOption
 	switch p.stage {
 	case providerChoose:
-		for _, name := range sortedKeys(p.cfg.Providers) {
+		for _, name := range providerChooseOrder(p.cfg) {
+			provider := p.cfg.Providers[name]
+			detail := strings.TrimSpace(provider.BaseURL)
+			if description := strings.TrimSpace(provider.Description); description != "" {
+				if detail != "" {
+					detail += " · " + description
+				} else {
+					detail = description
+				}
+			}
 			label := name
-			if description := p.cfg.Providers[name].Description; description != "" {
-				label += " · " + description
+			if detail != "" {
+				label += " · " + detail
 			}
 			if filter == "" || strings.Contains(strings.ToLower(label), filter) {
-				result = append(result, providerOption{label: label, value: name})
+				result = append(result, providerOption{label: label, value: name, name: name, detail: detail})
 			}
 		}
 	case providerModels:
-		if filter == "" {
-			result = append(result, providerOption{label: fmt.Sprintf("全部添加（%d 个模型）", len(p.models)), all: true})
-		}
 		for _, model := range p.models {
 			label := model.ID
 			if model.Name != "" && model.Name != model.ID {
@@ -210,6 +302,9 @@ func (m *ViewModel) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
 		return m.handleProviderSecretKey(msg)
 	}
 	options := p.options(m.input)
+	if p.stage == providerModels {
+		return m.handleProviderModelKey(msg, options)
+	}
 	switch msg.Type {
 	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
 		if len(options) > 0 {
@@ -238,20 +333,6 @@ func (m *ViewModel) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
 			} else {
 				return m.fetchProviderModels()
 			}
-		case providerModels:
-			ids := []string{option.value}
-			if option.all {
-				ids = make([]string, 0, len(p.models))
-				for _, model := range p.models {
-					ids = append(ids, model.ID)
-				}
-			}
-			res := p.onAdd(p.name, ids, !option.all)
-			if !res.Error {
-				m.closeProvider()
-			}
-			m.applyCommandResult(res)
-			return res.Cmd
 		}
 	default:
 		if p.stage == providerFailed {
@@ -259,12 +340,134 @@ func (m *ViewModel) handleProviderKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		m.editProviderFilter(msg)
 		p.sel = 0
-		if p.stage == providerModels && m.input == "" && len(p.options(m.input)) > 1 {
-			p.sel = 1
-		}
 	}
 	m.markDirty()
 	return nil
+}
+
+// handleProviderModelKey drives the multi-select model stage: Tab switches
+// between the action bar and the list, space marks a model, Enter adds.
+func (m *ViewModel) handleProviderModelKey(msg tea.KeyMsg, options []providerOption) tea.Cmd {
+	p := m.provider
+	actions := providerModelActionNames()
+	switch msg.Type {
+	case tea.KeyTab:
+		if p.focus == paneFocusActions {
+			p.focus = paneFocusList
+		} else {
+			p.focus = paneFocusActions
+		}
+	case tea.KeyShiftTab:
+		if p.focus == paneFocusActions {
+			p.focus = paneFocusList
+		} else {
+			p.focus = paneFocusActions
+		}
+	case tea.KeyLeft, tea.KeyRight:
+		if p.focus == paneFocusActions && len(actions) > 0 {
+			delta := 1
+			if msg.Type == tea.KeyLeft {
+				delta = -1
+			}
+			p.action = (p.action%len(actions) + delta + len(actions)) % len(actions)
+		}
+	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
+		if p.focus == paneFocusActions {
+			// Down leaves the action bar and enters the list.
+			if msg.Type == tea.KeyDown || msg.Type == tea.KeyPgDown {
+				p.focus = paneFocusList
+			}
+			break
+		}
+		if len(options) > 0 {
+			delta := 1
+			if msg.Type == tea.KeyUp || msg.Type == tea.KeyPgUp {
+				delta = -1
+			}
+			if msg.Type == tea.KeyPgUp || msg.Type == tea.KeyPgDown {
+				delta *= 5
+			}
+			p.sel = (p.sel + delta%len(options) + len(options)) % len(options)
+		}
+	case tea.KeySpace:
+		if p.focus == paneFocusActions {
+			break
+		}
+		if len(options) == 0 {
+			break
+		}
+		p.sel = min(max(p.sel, 0), len(options)-1)
+		p.failure = ""
+		id := options[p.sel].value
+		if p.picked == nil {
+			p.picked = map[string]bool{}
+		}
+		if p.picked[id] {
+			delete(p.picked, id)
+		} else {
+			p.picked[id] = true
+		}
+	case tea.KeyEnter:
+		if p.focus == paneFocusActions {
+			p.action = min(max(p.action, 0), len(actions)-1)
+			return m.runProviderAction(actions[p.action])
+		}
+		if len(options) == 0 {
+			return nil
+		}
+		p.sel = min(max(p.sel, 0), len(options)-1)
+		ids := p.pickedIDs()
+		if len(ids) == 0 {
+			// Nothing marked: Enter adds the highlighted model.
+			ids = []string{options[p.sel].value}
+		}
+		return m.addProviderModels(p.name, ids, len(ids) == 1)
+	default:
+		// Typing filters again, so the list takes the focus back.
+		p.focus = paneFocusList
+		m.editProviderFilter(msg)
+		p.sel = 0
+	}
+	m.markDirty()
+	return nil
+}
+
+// runProviderAction executes one entry of the model action bar.
+func (m *ViewModel) runProviderAction(action string) tea.Cmd {
+	p := m.provider
+	p.failure = ""
+	switch action {
+	case providerActionSelectAll:
+		p.picked = map[string]bool{}
+		for _, id := range p.allIDs() {
+			p.picked[id] = true
+		}
+	case providerActionClearAll:
+		p.picked = map[string]bool{}
+	case providerActionAddAll:
+		return m.addProviderModels(p.name, p.allIDs(), false)
+	case providerActionAddPicked:
+		ids := p.pickedIDs()
+		if len(ids) == 0 {
+			p.failure = "请先用空格选择模型"
+			m.markDirty()
+			return nil
+		}
+		return m.addProviderModels(p.name, ids, len(ids) == 1)
+	}
+	m.markDirty()
+	return nil
+}
+
+// addProviderModels applies a model import and closes the modal on success.
+func (m *ViewModel) addProviderModels(provider string, ids []string, single bool) tea.Cmd {
+	p := m.provider
+	res := p.onAdd(provider, ids, single)
+	if !res.Error {
+		m.closeProvider()
+	}
+	m.applyCommandResult(res)
+	return res.Cmd
 }
 
 func (m *ViewModel) editProviderFilter(msg tea.KeyMsg) {
@@ -368,17 +571,41 @@ func (m *ViewModel) providerPanelLines() []string {
 	case providerLoading:
 		title = p.name + " · 正在获取模型列表…"
 	case providerModels:
-		title = p.name + " · 选择模型添加并切换，或全部添加"
+		title = fmt.Sprintf("%s · 选择模型（已选 %d 个）", p.name, len(p.pickedIDs()))
+		if p.savedKey {
+			title += " · API Key 已保存"
+		}
 	case providerFailed:
 		title = p.name + " · 获取模型列表失败"
 	}
 	lines := []string{m.primaryStyle(true).Render(truncate(" "+oneLine(ansi.Strip(title)), width))}
+	if p.stage == providerKey {
+		if keyURL := strings.TrimSpace(p.cfg.Providers[p.name].KeyURL); keyURL != "" {
+			lines = append(lines, m.muted().Render(truncate(" 获取 API Key："+keyURL, width)))
+		}
+	}
 	if p.failure != "" {
 		lines = append(lines, m.errorStyle(false).Render(truncate(" "+oneLine(ansi.Strip(p.failure)), width)))
 	}
+	hint := " 输入关键字筛选 · ↑↓ 选择（首尾循环） · Enter 确认 · Esc 取消"
+	if p.stage == providerKey {
+		hint = " Enter 提交 · Esc 取消；成功获取列表后保存 Key"
+	}
+	if p.stage == providerLoading {
+		hint = " Esc 取消请求"
+	}
 	options := p.options(m.input)
+	// The model stage has its own action bar and keys.
+	if p.stage == providerModels {
+		hint = " 空格 选中/取消 · ↑↓ 选择 · Enter 添加 · Tab 切换操作栏 · Esc 取消"
+		lines = append(lines, m.providerActionBar(p, width))
+	}
+	// Keep the key hints directly above the candidate list.
 	if len(options) > 0 {
-		maxOptions := min(6, max(m.height-10-len(lines), 1))
+		lines = append(lines, m.muted().Render(truncate(hint, width)))
+	}
+	if len(options) > 0 {
+		maxOptions := min(8, max(m.height-10-len(lines), 1))
 		sel := min(max(p.sel, 0), len(options)-1)
 		start := max(sel-maxOptions+1, 0)
 		end := min(start+maxOptions, len(options))
@@ -387,22 +614,66 @@ func (m *ViewModel) providerPanelLines() []string {
 			if i == sel {
 				marker = " ❯ "
 			}
-			line := truncate(marker+oneLine(ansi.Strip(options[i].label)), width)
-			if i == sel {
+			if p.stage == providerChoose {
+				lines = append(lines, m.formatProviderOptionRow(marker, options[i], width, i == sel))
+				continue
+			}
+			text := options[i].label
+			if p.stage == providerModels {
+				box := "[ ]"
+				if p.picked[options[i].value] {
+					box = "[x]"
+				}
+				text = box + " " + text
+			}
+			line := truncate(marker+oneLine(ansi.Strip(text)), width)
+			if i == sel && (p.stage != providerModels || p.focus == paneFocusList) {
 				line = m.accentStyle(true).Render(line)
 			}
 			lines = append(lines, line)
 		}
 	}
-	hint := " 输入关键字筛选 · ↑↓ 选择 · Enter 确认 · Esc 取消"
-	if p.stage == providerKey {
-		hint = " Enter 提交 · Esc 取消；成功获取列表后保存 Key"
+	// Without candidates (key entry, loading, failure) the hint stays at the
+	// bottom of the panel.
+	if len(options) == 0 {
+		lines = append(lines, m.muted().Render(truncate(hint, width)))
 	}
-	if p.stage == providerLoading {
-		hint = " Esc 取消请求"
-	}
-	lines = append(lines, m.muted().Render(truncate(hint, width)))
 	return lines
+}
+
+// formatProviderOptionRow renders one provider candidate: the name is
+// emphasized (accent when selected, bold otherwise) while the endpoint and
+// description stay muted.
+func (m *ViewModel) formatProviderOptionRow(marker string, option providerOption, width int, selected bool) string {
+	avail := maxInt(width-lipgloss.Width(marker), 1)
+	name := truncate(oneLine(option.name), avail)
+	nameStyled := lipgloss.NewStyle().Bold(true).Render(name)
+	if selected {
+		nameStyled = m.accentStyle(true).Render(name)
+	}
+	line := marker + nameStyled
+	if rest := avail - lipgloss.Width(name) - 2; rest > 0 && option.detail != "" {
+		line += m.muted().Render("  " + truncate(oneLine(option.detail), rest))
+	}
+	return line
+}
+
+// providerActionBar renders the top actions of the model stage; the focused
+// action is emphasized while Tab owns the bar.
+func (m *ViewModel) providerActionBar(p *providerState, width int) string {
+	names := providerModelActionNames()
+	parts := make([]string, 0, len(names))
+	sep := m.muted().Render("│")
+	for i, name := range names {
+		label := " " + name + " "
+		if p.focus == paneFocusActions && i == p.action {
+			label = m.accentStyle(true).Render(" ❯ " + name + " ")
+		} else {
+			label = m.muted().Render(label)
+		}
+		parts = append(parts, label)
+	}
+	return truncate(strings.Join(parts, sep), width)
 }
 
 // addProviderModels runs on the TUI update goroutine after discovery completes.

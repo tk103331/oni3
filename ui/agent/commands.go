@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -305,6 +306,20 @@ func (m *ViewModel) slashHints() []string {
 		out = append(out, marker+it.line)
 	}
 	return out
+}
+
+// paletteHint describes the current candidate list and its keys.
+func (m *ViewModel) paletteHint(count int) string {
+	raw := strings.TrimLeft(m.input, " \t")
+	body := strings.TrimPrefix(raw, "/")
+	if !strings.ContainsAny(body, " \t") {
+		return fmt.Sprintf(" 命令（%d） · ↑↓ 选择 · Enter 确认 · 继续输入可筛选", count)
+	}
+	usage := m.paletteUsage()
+	if usage == "" {
+		return fmt.Sprintf(" 候选（%d） · ↑↓ 选择 · Enter 确认", count)
+	}
+	return " " + usage + " · ↑↓ 选择 · Enter 确认"
 }
 
 // formatCommandHint renders one command row in the palette.

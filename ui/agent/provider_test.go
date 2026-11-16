@@ -154,7 +154,10 @@ func TestProviderConfiguredKeyAndImportAllPreservesSelection(t *testing.T) {
 	if m.provider.stage != providerModels {
 		t.Fatal("unnecessary API key prompt")
 	}
-	m.provider.sel = 0
+	// Tab focuses the action bar; Right twice reaches "添加全部".
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if app.currentModelName() != "old" {
 		t.Fatalf("import-all switched model to %q", app.currentModelName())
@@ -259,8 +262,10 @@ func TestPluginProvidersAvailableBeforeFirstModel(t *testing.T) {
 			candidates = command.Values
 		}
 	}
-	if strings.Join(candidates, ",") != "catalog__cloud,catalog__local" {
-		t.Fatalf("provider candidates: %v", candidates)
+	for _, want := range []string{"catalog__cloud", "catalog__local"} {
+		if !containsString(candidates, want) {
+			t.Fatalf("provider candidates missing %q: %v", want, candidates)
+		}
 	}
 	if len(cfg.Models) != 0 {
 		t.Fatal("providers unexpectedly registered models")
@@ -276,6 +281,225 @@ func TestPluginProvidersAvailableBeforeFirstModel(t *testing.T) {
 		t.Fatal("optional-key provider did not prepare discovery")
 	}
 	m.closeProvider() // No real endpoint is contacted: the command is not executed.
+}
+
+func TestFirstRunOpensProviderPicker(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	fixture := filepath.Join(dir, "first-run.yml")
+	text := "agents:\n  OniThree: {system: Help}\n"
+	if err := os.WriteFile(fixture, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadConfig(fixture); err != nil {
+		t.Fatal(err)
+	}
+	app, err := NewAgentApp("OniThree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.model.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	if !app.openFirstRunProvider() {
+		t.Fatal("the provider picker should open without models")
+	}
+	if app.model.provider == nil || app.model.provider.stage != providerChoose {
+		t.Fatalf("provider flow = %+v", app.model.provider)
+	}
+	// Built-in providers are offered with their endpoint.
+	options := app.model.provider.options("")
+	labels := make([]string, 0, len(options))
+	for _, option := range options {
+		labels = append(labels, option.label)
+	}
+	joined := strings.Join(labels, "\n")
+	for _, want := range []string{
+		"openai", "https://api.openai.com/v1", "deepseek", "ollama",
+		"magpie", "http://127.0.0.1:3425/v1",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("provider options missing %q:\n%s", want, joined)
+		}
+	}
+	// A configured model skips the picker.
+	cfg := config.GetConfig()
+	if cfg.Models == nil {
+		cfg.Models = map[string]config.Model{}
+	}
+	cfg.Models["probe"] = config.Model{Provider: "openai", Model: "gpt-4o"}
+	app.modelOverride = "probe"
+	if app.openFirstRunProvider() {
+		t.Fatal("the picker must not open when a model is configured")
+	}
+}
+
+func TestProviderKeyPromptShowsKeyURL(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	fixture := filepath.Join(dir, "key-url.yml")
+	if err := os.WriteFile(fixture, []byte("agents:\n  OniThree: {system: Help}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.LoadConfig(fixture); err != nil {
+		t.Fatal(err)
+	}
+	app, err := NewAgentApp("OniThree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.model.Update(tea.WindowSizeMsg{Width: 110, Height: 30})
+	app.model.executeSlashCommand("/provider openai")
+	if app.model.provider == nil || app.model.provider.stage != providerKey {
+		t.Fatalf("provider flow = %+v", app.model.provider)
+	}
+	if !strings.Contains(app.model.View(), "https://platform.openai.com/api-keys") {
+		t.Fatalf("key URL missing from the prompt:\n%s", app.model.View())
+	}
+}
+
+func TestProviderOptionRowEmphasizesName(t *testing.T) {
+	m := NewViewModel(nil)
+	m = drive(m, tea.WindowSizeMsg{Width: 110, Height: 30})
+	option := providerOption{
+		name:   "deepseek",
+		detail: "https://api.deepseek.com/v1 · DeepSeek 官方",
+	}
+	for _, selected := range []bool{false, true} {
+		row := ansi.Strip(m.formatProviderOptionRow(" ❯ ", option, 100, selected))
+		if !strings.Contains(row, "deepseek") || !strings.Contains(row, "https://api.deepseek.com/v1") {
+			t.Fatalf("selected=%v row = %q", selected, row)
+		}
+		// The name comes first and the annotation follows it.
+		if strings.Index(row, "deepseek") > strings.Index(row, "https://api.deepseek.com/v1") {
+			t.Fatalf("selected=%v name must lead the row: %q", selected, row)
+		}
+	}
+	// A negative width budget must not spill outside the row.
+	if w := ansi.StringWidth(ansi.Strip(m.formatProviderOptionRow(" ", option, 8, false))); w > 8 {
+		t.Fatalf("row width = %d", w)
+	}
+}
+
+func TestProviderChooseOrderPrefersBuiltins(t *testing.T) {
+	cfg := &config.Config{Providers: map[string]config.Provider{
+		"custom": {Type: "openai", BaseURL: "https://custom.example/v1"},
+		"zhipu":  {Type: "openai", BaseURL: "https://open.bigmodel.cn/api/paas/v4"},
+		"openai": {Type: "openai", BaseURL: "https://api.openai.com/v1"},
+	}}
+	got := strings.Join(providerChooseOrder(cfg), ",")
+	if got != "openai,zhipu,custom" {
+		t.Fatalf("provider order = %q", got)
+	}
+}
+
+func TestProviderChooseShowsBaseURL(t *testing.T) {
+	m := NewViewModel(nil)
+	cfg := &config.Config{Providers: map[string]config.Provider{"cloud": {
+		Type: "openai", BaseURL: "https://cloud.example/v1", Description: "团队",
+	}}}
+	m.openProvider(cfg, context.Background(), "", nil)
+	options := m.provider.options("")
+	if len(options) != 1 {
+		t.Fatalf("options = %+v", options)
+	}
+	for _, want := range []string{"cloud", "https://cloud.example/v1", "团队"} {
+		if !strings.Contains(options[0].label, want) {
+			t.Fatalf("provider row missing %q: %q", want, options[0].label)
+		}
+	}
+}
+
+func TestProviderModelMultiSelect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[{"id":"alpha"},{"id":"beta"},{"id":"gamma"}]}`)
+	}))
+	defer server.Close()
+	app, _ := providerTestApp(t, config.Provider{Type: "openai", BaseURL: server.URL, APIKey: "configured"}, true)
+	m := app.model
+	receiveDiscovery(t, m, m.executeSlashCommand("/provider cloud"))
+
+	// Space marks alpha, then beta.
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	if got := strings.Join(m.provider.pickedIDs(), ","); got != "alpha,beta" {
+		t.Fatalf("picked = %q", got)
+	}
+	out := m.View()
+	for _, want := range []string{"[x] alpha", "[x] beta", "[ ] gamma", "已选 2 个", "全部选中", "添加选中"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("model panel missing %q:\n%s", want, out)
+		}
+	}
+
+	// Tab focuses the action bar; 添加选中 is the fourth entry.
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	for range 3 {
+		providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.provider != nil {
+		t.Fatal("添加选中 did not close the modal")
+	}
+	models := config.GetConfig().Models
+	for _, name := range []string{"cloud/alpha", "cloud/beta"} {
+		if _, ok := models[name]; !ok {
+			t.Fatalf("missing imported model %s: %v", name, models)
+		}
+	}
+	if _, ok := models["cloud/gamma"]; ok {
+		t.Fatal("unmarked model was imported")
+	}
+	if app.currentModelName() != "old" {
+		t.Fatalf("multi selection switched the model to %q", app.currentModelName())
+	}
+}
+
+func TestProviderSelectAllAction(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[{"id":"alpha"},{"id":"beta"}]}`)
+	}))
+	defer server.Close()
+	app, _ := providerTestApp(t, config.Provider{Type: "openai", BaseURL: server.URL, APIKey: "configured"}, true)
+	m := app.model
+	receiveDiscovery(t, m, m.executeSlashCommand("/provider cloud"))
+
+	// Tab to the action bar, run 全部选中, then 添加选中.
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // 全部选中
+	if got := strings.Join(m.provider.pickedIDs(), ","); got != "alpha,beta" {
+		t.Fatalf("select all picked = %q", got)
+	}
+	for range 3 {
+		providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // 添加选中
+	if m.provider != nil {
+		t.Fatal("添加选中 did not close the modal")
+	}
+	if len(config.GetConfig().Models) != 3 { // old + alpha + beta
+		t.Fatalf("models = %v", config.GetConfig().Models)
+	}
+}
+
+func TestProviderAddPickedWithoutSelection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"data":[{"id":"alpha"}]}`)
+	}))
+	defer server.Close()
+	app, _ := providerTestApp(t, config.Provider{Type: "openai", BaseURL: server.URL, APIKey: "configured"}, true)
+	m := app.model
+	receiveDiscovery(t, m, m.executeSlashCommand("/provider cloud"))
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	for range 3 {
+		providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	providerKeyCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter}) // 添加选中 with nothing marked
+	if m.provider == nil {
+		t.Fatal("empty selection should keep the modal open")
+	}
+	if !strings.Contains(m.View(), "请先用空格选择模型") {
+		t.Fatalf("missing empty-selection notice:\n%s", m.View())
+	}
 }
 
 func TestProviderFilteringFrameHeightAndSecretCancellation(t *testing.T) {

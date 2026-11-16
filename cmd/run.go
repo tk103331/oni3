@@ -42,6 +42,18 @@ var runCmd = &cobra.Command{
 		agentName, _ := cmd.Flags().GetString("agent")
 		prompt, _ := cmd.Flags().GetString("prompt")
 
+		// Non-interactive runs need a model; a fresh install has only provider
+		// presets and no models until one is imported in the interface.
+		if cfg != nil {
+			model := cfg.Agents[agentName].Model
+			if model == "" {
+				model = cfg.DefaultModelName()
+			}
+			if model == "" {
+				return fmt.Errorf("没有可用的模型配置：请先运行 oni3 并通过 /provider 添加模型，或编辑 %s", cfg.SourcePath)
+			}
+		}
+
 		// Print execution header
 		printHeader("Agent Execution")
 		fmt.Printf("🤖 Agent: %s\n📝 Prompt: %s\n", agentName, prompt)

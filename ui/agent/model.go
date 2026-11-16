@@ -1233,10 +1233,22 @@ func (m *ViewModel) deleteWord() {
 func (m *ViewModel) paletteView() []string {
 	hints := m.slashHints()
 	maxLines := min(8, maxInt(m.height-7-len(m.todoPanelLines())-len(m.questionPanelLines()), 0))
+	if maxLines <= 0 {
+		return nil
+	}
+	// A hint line sits above every candidate list.
+	if items := m.paletteItems(); len(items) > 0 {
+		maxItems := maxInt(maxLines-1, 1)
+		if len(hints) > maxItems {
+			// Follow selection instead of always showing the first candidates.
+			start := maxInt(min(m.paletteSel-maxItems+1, len(hints)-maxItems), 0)
+			hints = hints[start : start+maxItems]
+		}
+		header := m.muted().Render(truncate(m.paletteHint(len(items)), maxInt(m.width-2, 1)))
+		return append([]string{header}, hints...)
+	}
 	if len(hints) > maxLines {
-		// Follow selection instead of always showing the first candidates.
-		start := maxInt(min(m.paletteSel-maxLines+1, len(hints)-maxLines), 0)
-		hints = hints[start : start+maxLines]
+		hints = hints[:maxLines]
 	}
 	return hints
 }
@@ -1874,7 +1886,7 @@ func (m *ViewModel) View() string {
 	if m.confirmQuit {
 		inputLine = m.warningStyle(true).Render("⚠ 再按一次 Ctrl+C 退出（任意其他键取消）")
 	} else if m.mcpPanelState != nil {
-		inputLine = m.muted().Render("MCP 服务管理 · ↑↓ 选择 · Enter 切换 · Esc 关闭")
+		inputLine = m.muted().Render("MCP 服务管理 · 空格 选中 · Tab 切换操作栏 · Enter 关闭 · Esc 取消")
 	} else if m.provider != nil {
 		inputLine = m.primaryStyle(true).Render("❯") + " " + m.renderEditableInput()
 		if m.provider.stage == providerLoading {
@@ -1920,7 +1932,7 @@ func (m *ViewModel) View() string {
 			helpText = "API Key · enter confirm · esc cancel"
 		}
 	} else if m.mcpPanelState != nil {
-		helpText = "↑↓ select · enter toggle · esc close"
+		helpText = "↑↓ select · space mark · tab actions · enter close · esc cancel"
 	} else if m.question != nil {
 		helpText = "↑↓ select · enter answer · esc cancel"
 	} else if m.hasPalette() {

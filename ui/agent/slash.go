@@ -271,7 +271,7 @@ func modelValueLabels(cfg *config.Config) []string {
 		m := cfg.Models[name]
 		label := m.Model
 		if m.Provider != "" {
-			label = m.Provider + "." + m.Model
+			label = m.Provider + " · " + m.Model
 		}
 		labels[i] = label
 	}

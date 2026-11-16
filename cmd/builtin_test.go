@@ -108,10 +108,14 @@ func TestEnsureBuiltinAgentFallbackModel(t *testing.T) {
 		t.Fatalf("fallback model = %q, want alphabetically first", got)
 	}
 
-	// No models at all is a helpful error.
+	// No models at all still creates the agent so the interface can open the
+	// provider picker on the first run.
 	empty := &config.Config{}
-	if _, err := ensureBuiltinAgent(empty); err == nil {
-		t.Fatal("expected error without models")
+	if _, err := ensureBuiltinAgent(empty); err != nil {
+		t.Fatalf("first run should create the agent: %v", err)
+	}
+	if got := empty.Agents[builtinAgentName].Model; got != "" {
+		t.Fatalf("first-run agent model = %q, want empty", got)
 	}
 }
 

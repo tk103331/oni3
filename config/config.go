@@ -87,6 +87,9 @@ type Provider struct {
 	BaseURL     string `yaml:"base_url,omitempty"`
 	APIKey      string `yaml:"api_key,omitempty"`
 	Description string `yaml:"description,omitempty"`
+	// KeyURL points at the page that issues an API key for this provider. It is
+	// shown by the API key prompt; built-in presets fill it in.
+	KeyURL string `yaml:"key_url,omitempty"`
 	// ModelsURL may be absolute or relative to BaseURL. A relative path such as
 	// "models" appends to its base path; "/models" replaces the base path.
 	ModelsURL      string            `yaml:"models_url,omitempty"`
@@ -237,6 +240,10 @@ func LoadConfig(configPath string) (*Config, error) {
 	if err := cfg.normalizeProviderTypes(); err != nil {
 		return nil, err
 	}
+	// Common providers are always selectable from /provider. Seeding happens
+	// before plugins and provider state load so saved keys and imported models
+	// attach to them; an entry in the configuration file always wins.
+	cfg.seedBuiltinProviders()
 	for name, server := range cfg.MCPServers {
 		if err := ValidateMCPServerName(name); err != nil {
 			return nil, err

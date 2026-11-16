@@ -151,71 +151,119 @@ func TestMCPPanelOpensAndToggles(t *testing.T) {
 		t.Fatal("panel did not open")
 	}
 
-	// The panel lists both servers with state, tool count, label and both
-	// summary rows.
+	// The panel lists both servers with state, tool count, label and the
+	// action bar on top.
 	out := m.View()
-	for _, want := range []string{"filesystem", "文件系统", "grep", "https://mcp.grep.app", "✓ 启用", "0 工具", "全部启用", "全部禁用"} {
+	for _, want := range []string{
+		"filesystem", "文件系统", "grep", "https://mcp.grep.app", "✓ 启用", "0 工具",
+		"全部选中", "全部取消", "启用全部", "启用选中", "禁用全部", "禁用选中",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("panel missing %q:\n%s", want, out)
 		}
 	}
 
-	// Space on the first row toggles filesystem and keeps the panel open.
+	// Space marks filesystem and keeps the panel open.
 	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
 	if m.mcpPanelState == nil {
-		t.Fatal("panel should stay open after a space toggle")
+		t.Fatal("panel should stay open after a space mark")
+	}
+	if !strings.Contains(m.View(), "已选 1 个") {
+		t.Fatalf("marked count missing:\n%s", m.View())
+	}
+	// Marking alone changes nothing; the action bar applies it.
+	if ac, ok := app.effectiveAgentConfig(); !ok || !containsString(ac.MCPServers, "filesystem") {
+		t.Fatalf("marking must not toggle the server: %v", ac.MCPServers)
+	}
+
+	// Tab focuses the action bar; 禁用选中 is the last entry.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyTab})
+	for range 5 {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mcpPanelState == nil {
+		t.Fatal("panel should stay open after an action")
 	}
 	ac, ok := app.effectiveAgentConfig()
 	if !ok || containsString(ac.MCPServers, "filesystem") {
-		t.Fatalf("filesystem should be disabled after space toggle: %v", ac.MCPServers)
+		t.Fatalf("filesystem should be disabled after 禁用选中: %v", ac.MCPServers)
+	}
+	if !containsString(ac.MCPServers, "grep") {
+		t.Fatalf("unmarked grep should stay enabled: %v", ac.MCPServers)
 	}
 	// The row state refreshes in place.
-	out = m.View()
-	if !strings.Contains(out, "⊘ 禁用") {
-		t.Fatalf("row state did not refresh:\n%s", out)
+	if !strings.Contains(m.View(), "⊘ 禁用") {
+		t.Fatalf("row state did not refresh:\n%s", m.View())
 	}
 
-	// Space again re-enables it.
-	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
+	// 启用选中 re-enables the marked server.
+	for range 2 {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyLeft})
+	}
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
 	ac, _ = app.effectiveAgentConfig()
 	if !containsString(ac.MCPServers, "filesystem") {
 		t.Fatalf("filesystem should be re-enabled: %v", ac.MCPServers)
 	}
 
-	// Enter closes the panel.
+	// Enter on the list closes the panel.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyTab})
 	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.mcpPanelState != nil {
-		t.Fatal("Enter should close the panel")
+		t.Fatal("Enter on the list should close the panel")
 	}
 }
 
-func TestMCPPanelEnableAllRow(t *testing.T) {
+func TestMCPPanelHintAndActionBarAboveRows(t *testing.T) {
+	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
+	app.openMCPPanel()
+	lines := app.model.mcpPanelLines()
+	if len(lines) < 4 {
+		t.Fatalf("panel lines = %v", lines)
+	}
+	if !strings.Contains(lines[0], "MCP 服务管理") {
+		t.Fatalf("first line is not the title: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "全部选中") || !strings.Contains(lines[1], "禁用选中") {
+		t.Fatalf("action bar should sit on top: %q", lines[1])
+	}
+	if !strings.Contains(lines[2], "空格 选中/取消") || !strings.Contains(lines[2], "Tab") {
+		t.Fatalf("hint should sit above the list: %q", lines[2])
+	}
+	if !strings.Contains(lines[3], "[ ] filesystem") {
+		t.Fatalf("rows should follow the hint: %q", lines[3])
+	}
+}
+
+func TestMCPPanelEnableAllAction(t *testing.T) {
 	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
 	app.executeSlash("mcp disable grep")
 
 	app.openMCPPanel()
 	m := app.model
-	// Rows: filesystem, grep, 全部启用, 全部禁用. Two downs select 全部启用.
-	for range 2 {
-		m = drive(m, tea.KeyMsg{Type: tea.KeyDown})
-	}
-	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
+	// Tab focuses the action bar (全部选中); two rights select 启用全部.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyTab})
+	m = drive(m, tea.KeyMsg{Type: tea.KeyRight})
+	m = drive(m, tea.KeyMsg{Type: tea.KeyRight})
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
 	ac, ok := app.effectiveAgentConfig()
 	if !ok || len(ac.MCPServers) != 2 {
 		t.Fatalf("enable-all should restore both servers: %v", ac.MCPServers)
 	}
 }
 
-func TestMCPPanelDisableAllRow(t *testing.T) {
+func TestMCPPanelDisableAllAction(t *testing.T) {
 	app, _ := mcpTestApp(t, []string{"filesystem", "grep"})
 
 	app.openMCPPanel()
 	m := app.model
-	// Three downs select 全部禁用.
-	for range 3 {
-		m = drive(m, tea.KeyMsg{Type: tea.KeyDown})
+	// Tab focuses the action bar; four rights select 禁用全部.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyTab})
+	for range 4 {
+		m = drive(m, tea.KeyMsg{Type: tea.KeyRight})
 	}
-	m = drive(m, tea.KeyMsg{Type: tea.KeySpace})
+	m = drive(m, tea.KeyMsg{Type: tea.KeyEnter})
 	ac, ok := app.effectiveAgentConfig()
 	if !ok || len(ac.MCPServers) != 0 {
 		t.Fatalf("disable-all should empty the server list: %v", ac.MCPServers)
@@ -258,7 +306,7 @@ func TestSlashCommandsCarryValueLabels(t *testing.T) {
 	if model.KeepArgs {
 		t.Fatal("/model should execute immediately")
 	}
-	if len(model.ValueLabels) != len(model.Values) || !strings.Contains(strings.Join(model.ValueLabels, ","), "cloud.gpt-4o") {
+	if len(model.ValueLabels) != len(model.Values) || !strings.Contains(strings.Join(model.ValueLabels, ","), "cloud · gpt-4o") {
 		t.Fatalf("model labels = %v for values %v", model.ValueLabels, model.Values)
 	}
 	if len(agent.ValueLabels) != len(agent.Values) {

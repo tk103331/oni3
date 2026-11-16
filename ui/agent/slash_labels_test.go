@@ -162,7 +162,7 @@ func TestFormatValueRowEmphasizesValue(t *testing.T) {
 	}
 }
 
-func TestModelLabelUsesDotSeparator(t *testing.T) {
+func TestModelLabelUsesMiddleDotSeparator(t *testing.T) {
 	cfg := configWith(t, `
 providers:
   cloud: {type: openai}
@@ -170,7 +170,7 @@ models:
   local: {provider: cloud, model: gpt-4o-mini}
 `)
 	labels := modelValueLabels(cfg)
-	if len(labels) != 1 || labels[0] != "cloud.gpt-4o-mini" {
+	if len(labels) != 1 || labels[0] != "cloud · gpt-4o-mini" {
 		t.Fatalf("labels = %v", labels)
 	}
 }
@@ -181,8 +181,19 @@ providers:
   deepseek: {type: deepseek, base_url: "https://api.deepseek.com/v1"}
 `)
 	labels := providerValueLabels(cfg)
-	if len(labels) != 1 || labels[0] != "https://api.deepseek.com/v1" {
-		t.Fatalf("labels = %v", labels)
+	// Built-in providers are seeded beside the configured one; every label is
+	// the provider's base URL.
+	names := sortedKeys(cfg.Providers)
+	if len(labels) != len(names) {
+		t.Fatalf("labels = %v for %v", labels, names)
+	}
+	for i, name := range names {
+		if labels[i] != cfg.Providers[name].BaseURL {
+			t.Fatalf("label for %s = %q", name, labels[i])
+		}
+	}
+	if !containsString(labels, "https://api.deepseek.com/v1") {
+		t.Fatalf("configured provider missing: %v", labels)
 	}
 }
 
