@@ -1,0 +1,1175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oni3 Web</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1015;
+    --panel: #151823;
+    --panel-2: #1b2030;
+    --text: #e6e9f2;
+    --muted: #8d95a8;
+    --border: #262c3d;
+    --accent: #7c9cff;
+    --accent-soft: rgba(124, 156, 255, .14);
+    --danger: #ff7b72;
+    --ok: #5fd18a;
+    --code: #10131c;
+    --shadow: 0 18px 50px rgba(0, 0, 0, .45);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  button, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  #app { display: flex; height: 100vh; overflow: hidden; }
+
+  .sidebar {
+    width: 264px;
+    flex: 0 0 264px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 20px 18px 14px;
+    font-weight: 700;
+    font-size: 20px;
+    letter-spacing: .5px;
+  }
+  .brand span {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: 1px 7px;
+    letter-spacing: 1px;
+  }
+  .side-actions { padding: 0 12px 12px; }
+  .new-chat {
+    width: 100%;
+    background: var(--accent-soft);
+    border: 1px solid rgba(124, 156, 255, .35);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 9px 12px;
+    text-align: left;
+    transition: background .15s;
+  }
+  .new-chat:hover { background: rgba(124, 156, 255, .24); }
+  .side-title {
+    padding: 6px 18px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--muted);
+  }
+  .session-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+  .session-item {
+    width: 100%;
+    background: transparent;
+    border: 0;
+    border-radius: 9px;
+    padding: 9px 10px;
+    text-align: left;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .session-item:hover { background: var(--panel-2); }
+  .session-item.active { background: var(--accent-soft); }
+  .session-item .title {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13.5px;
+  }
+  .session-item .meta {
+    display: block;
+    color: var(--muted);
+    font-size: 11.5px;
+    margin-top: 2px;
+  }
+  .side-foot {
+    border-top: 1px solid var(--border);
+    padding: 10px 16px 14px;
+    color: var(--muted);
+    font-size: 11.5px;
+    word-break: break-all;
+  }
+
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(14, 16, 21, .85);
+    backdrop-filter: blur(8px);
+  }
+  .select-wrap { position: relative; }
+  header select {
+    appearance: none;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 7px 30px 7px 11px;
+    max-width: 260px;
+  }
+  .select-wrap::after {
+    content: "▾";
+    position: absolute;
+    right: 11px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    pointer-events: none;
+  }
+  .spacer { flex: 1; }
+  .status {
+    color: var(--muted);
+    font-size: 12.5px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .status::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .status.running::before { background: var(--ok); animation: pulse 1.1s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .stop-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 6px 12px;
+    color: var(--danger);
+  }
+  .stop-btn:hover { border-color: var(--danger); }
+  .ghost-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 6px 11px;
+    color: var(--muted);
+  }
+  .ghost-btn:hover { color: var(--text); border-color: var(--muted); }
+
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 26px max(24px, calc((100% - 820px) / 2));
+  }
+  .empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    gap: 10px;
+    text-align: center;
+  }
+  .empty strong { color: var(--text); font-size: 22px; font-weight: 650; }
+  .empty .hint { max-width: 460px; font-size: 13.5px; }
+
+  .msg { display: flex; gap: 12px; margin-bottom: 24px; align-items: flex-start; }
+  .avatar {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    border-radius: 8px;
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .3px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .msg.assistant .avatar { background: var(--accent-soft); border-color: rgba(124,156,255,.35); color: var(--accent); }
+  .msg .body { min-width: 0; flex: 1; }
+  .msg.user .bubble {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 14px;
+    display: inline-block;
+    max-width: 100%;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .answer { word-break: break-word; }
+  .answer p { margin: 0 0 10px; }
+  .answer p:last-child { margin-bottom: 0; }
+  .answer h2, .answer h3, .answer h4, .answer h5 { margin: 18px 0 8px; line-height: 1.3; }
+  .answer ul, .answer ol { margin: 6px 0 12px; padding-left: 22px; }
+  .answer li { margin: 3px 0; }
+  .answer blockquote {
+    margin: 8px 0;
+    padding: 4px 12px;
+    border-left: 3px solid var(--accent);
+    color: var(--muted);
+  }
+  .answer hr { border: 0; border-top: 1px solid var(--border); margin: 16px 0; }
+  .answer a { color: var(--accent); }
+  .answer code {
+    background: var(--code);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 5px;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .code-block {
+    margin: 10px 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--code);
+  }
+  .code-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+  .copy-code {
+    background: transparent;
+    border: 0;
+    color: var(--muted);
+    font-size: 11.5px;
+    padding: 0;
+  }
+  .copy-code:hover { color: var(--text); }
+  .code-block pre { margin: 0; padding: 11px 13px; overflow-x: auto; }
+  .code-block code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+
+  details.reasoning {
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, .015);
+    padding: 8px 12px;
+  }
+  details.reasoning summary {
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 12.5px;
+    user-select: none;
+  }
+  .reasoning-text {
+    margin-top: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 260px;
+    overflow-y: auto;
+  }
+
+  .tools { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .tool {
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel);
+    overflow: hidden;
+    font-size: 13px;
+  }
+  .tool-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 11px;
+    cursor: pointer;
+  }
+  .tool-head:hover { background: var(--panel-2); }
+  .tool-name { font-weight: 600; font-family: ui-monospace, Menlo, Consolas, monospace; }
+  .tool-state { color: var(--muted); font-size: 11.5px; }
+  .tool.failed .tool-state { color: var(--danger); }
+  .tool.done .tool-state { color: var(--ok); }
+  .tool pre {
+    margin: 0;
+    padding: 9px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--code);
+    color: var(--muted);
+    font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow: auto;
+  }
+  .tool pre:empty { display: none; }
+  .tool.collapsed pre { display: none; }
+
+  .todos {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    background: var(--panel);
+    padding: 9px 13px;
+  }
+  .todos-title { color: var(--muted); font-size: 11.5px; margin-bottom: 5px; }
+  .todos ul { list-style: none; margin: 0; padding: 0; }
+  .todos li { display: flex; gap: 8px; padding: 2px 0; font-size: 13px; }
+  .todos li.done { color: var(--muted); text-decoration: line-through; }
+  .todos li.active { color: var(--accent); }
+
+  .qa {
+    margin-top: 10px;
+    border-left: 3px solid var(--accent);
+    padding: 6px 12px;
+    background: var(--panel);
+    border-radius: 0 8px 8px 0;
+    font-size: 13px;
+  }
+  .qa .q { color: var(--muted); font-size: 11.5px; }
+  .qa .a { margin-top: 3px; }
+
+  .error-banner {
+    margin-top: 10px;
+    border: 1px solid rgba(255, 123, 114, .4);
+    background: rgba(255, 123, 114, .08);
+    color: var(--danger);
+    border-radius: 9px;
+    padding: 8px 12px;
+    font-size: 13px;
+    white-space: pre-wrap;
+  }
+
+  .composer {
+    padding: 12px max(24px, calc((100% - 820px) / 2)) 18px;
+    border-top: 1px solid var(--border);
+  }
+  .composer-box {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 13px;
+    padding: 9px 10px 9px 14px;
+  }
+  .composer-box:focus-within { border-color: rgba(124, 156, 255, .55); }
+  #input {
+    flex: 1;
+    resize: none;
+    background: transparent;
+    border: 0;
+    outline: 0;
+    min-height: 26px;
+    max-height: 200px;
+    padding: 3px 0;
+    line-height: 1.5;
+  }
+  #input::placeholder { color: var(--muted); }
+  .send-btn {
+    background: var(--accent);
+    border: 0;
+    color: #0b0e16;
+    font-weight: 650;
+    border-radius: 9px;
+    padding: 7px 15px;
+  }
+  .send-btn:disabled { opacity: .45; cursor: default; }
+  .composer-hint {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 6px;
+    padding-left: 3px;
+  }
+
+  .modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(4, 6, 10, .62);
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    z-index: 20;
+  }
+  .modal[hidden] { display: none; }
+  .modal-card {
+    width: min(560px, 100%);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px 16px;
+  }
+  .modal-title { font-weight: 650; font-size: 15px; margin-bottom: 8px; }
+  .modal-text { white-space: pre-wrap; word-break: break-word; color: var(--text); }
+  .modal-detail {
+    margin-top: 10px;
+    background: var(--code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    max-height: 200px;
+    overflow: auto;
+    font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    color: var(--muted);
+    white-space: pre-wrap;
+  }
+  .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; flex-wrap: wrap; }
+  .modal-actions button {
+    border-radius: 9px;
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    padding: 7px 13px;
+  }
+  .modal-actions button.primary { background: var(--accent); border-color: var(--accent); color: #0b0e16; font-weight: 650; }
+  .modal-actions button.danger { color: var(--danger); }
+  #questionInput {
+    width: 100%;
+    margin-top: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 9px 11px;
+    outline: 0;
+  }
+  .option-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+  .option-list button {
+    text-align: left;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 8px 11px;
+  }
+  .option-list button:hover { border-color: var(--accent); }
+
+  @media (max-width: 760px) {
+    .sidebar { display: none; }
+    #messages, .composer { padding-left: 16px; padding-right: 16px; }
+    header { padding: 10px 14px; flex-wrap: wrap; }
+    header select { max-width: 46vw; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <aside class="sidebar">
+    <div class="brand">oni3 <span>WEB</span></div>
+    <div class="side-actions">
+      <button id="newChat" class="new-chat">＋ 新会话</button>
+    </div>
+    <div class="side-title">最近会话</div>
+    <div id="sessionList" class="session-list"></div>
+    <div class="side-foot">
+      <div id="workdir"></div>
+      <div id="version"></div>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <div class="select-wrap"><select id="agentSel" title="Agent"></select></div>
+      <div class="select-wrap"><select id="modelSel" title="模型"></select></div>
+      <div class="spacer"></div>
+      <button id="logoutBtn" class="ghost-btn" hidden title="清除本机登录状态">锁定</button>
+      <span id="status" class="status">就绪</span>
+      <button id="stopBtn" class="stop-btn" hidden>停止</button>
+    </header>
+
+    <section id="messages"></section>
+
+    <div class="composer">
+      <div class="composer-box">
+        <textarea id="input" rows="1" placeholder="给 Agent 发消息…"></textarea>
+        <button id="sendBtn" class="send-btn">发送</button>
+      </div>
+      <div class="composer-hint">Enter 发送 · Shift+Enter 换行 · 危险工具会在页面中请求确认</div>
+    </div>
+  </main>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="modal-card">
+    <div id="modalTitle" class="modal-title"></div>
+    <div id="modalText" class="modal-text"></div>
+    <div id="modalDetail" class="modal-detail" hidden></div>
+    <div id="questionBox" hidden>
+      <input id="questionInput" placeholder="输入回答（留空表示取消）">
+      <div id="optionList" class="option-list"></div>
+    </div>
+    <div id="modalActions" class="modal-actions"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+const state = {
+  sessionId: null,
+  running: false,
+  agents: [],
+  models: [],
+  defaultModel: "",
+  currentTurn: null,
+};
+
+const $ = (id) => document.getElementById(id);
+const messagesEl = $("messages");
+const inputEl = $("input");
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  })[c]);
+}
+
+function inlineFormat(s) {
+  return s
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+      '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+}
+
+function renderMarkdown(source) {
+  if (!source) return "";
+  const codeBlocks = [];
+  let text = escapeHtml(source).replace(/```([\w+-]*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const i = codeBlocks.length;
+    codeBlocks.push(
+      '<div class="code-block"><div class="code-head"><span>' + (lang || "code") +
+      '</span><button class="copy-code" type="button">复制</button></div><pre><code>' +
+      code.replace(/\n$/, "") + "</code></pre></div>"
+    );
+    return "\n\n\u0000CODE" + i + "\u0000\n\n";
+  });
+
+  const out = [];
+  let para = [];
+  let list = null;
+  const flushPara = () => {
+    if (para.length) { out.push("<p>" + inlineFormat(para.join("<br>")) + "</p>"); para = []; }
+  };
+  const flushList = () => {
+    if (list) {
+      out.push("<" + list.tag + ">" + list.items.map((i) => "<li>" + inlineFormat(i) + "</li>").join("") + "</" + list.tag + ">");
+      list = null;
+    }
+  };
+
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) { flushPara(); flushList(); continue; }
+    const code = line.match(/^\u0000CODE(\d+)\u0000$/);
+    if (code) { flushPara(); flushList(); out.push("\u0000RAW" + code[1] + "\u0000"); continue; }
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      flushPara(); flushList();
+      const level = heading[1].length + 2;
+      out.push("<h" + level + ">" + inlineFormat(heading[2]) + "</h" + level + ">");
+      continue;
+    }
+    if (/^(-{3,}|\*{3,})$/.test(line)) { flushPara(); flushList(); out.push("<hr>"); continue; }
+    if (/^>\s?/.test(line)) {
+      flushPara(); flushList();
+      out.push("<blockquote>" + inlineFormat(line.replace(/^>\s?/, "")) + "</blockquote>");
+      continue;
+    }
+    const bullet = line.match(/^[-*+]\s+(.*)$/);
+    if (bullet) {
+      flushPara();
+      if (!list || list.tag !== "ul") { flushList(); list = { tag: "ul", items: [] }; }
+      list.items.push(bullet[1]);
+      continue;
+    }
+    const numbered = line.match(/^\d+[.)]\s+(.*)$/);
+    if (numbered) {
+      flushPara();
+      if (!list || list.tag !== "ol") { flushList(); list = { tag: "ol", items: [] }; }
+      list.items.push(numbered[1]);
+      continue;
+    }
+    flushList();
+    para.push(line);
+  }
+  flushPara(); flushList();
+  return out.join("\n").replace(/\u0000RAW(\d+)\u0000/g, (_, i) => codeBlocks[Number(i)]);
+}
+
+function nearBottom() {
+  return messagesEl.scrollHeight - messagesEl.scrollTop - messagesEl.clientHeight < 120;
+}
+
+function scrollToBottom(force) {
+  if (force || nearBottom()) messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function clearMessages() {
+  messagesEl.innerHTML = "";
+  state.currentTurn = null;
+}
+
+function showEmpty() {
+  clearMessages();
+  const agent = currentAgent();
+  messagesEl.innerHTML = '<div class="empty"><strong>Oni3 Web</strong>' +
+    '<div class="hint">' + escapeHtml(agent ? agent.description : "") + "</div>" +
+    '<div class="hint">选择 Agent 与模型，然后开始对话。会话保存在本机，可从左侧恢复。</div></div>';
+}
+
+function addUserMessage(text) {
+  const el = document.createElement("div");
+  el.className = "msg user";
+  el.innerHTML = '<div class="avatar">你</div><div class="body"><div class="bubble"></div></div>';
+  el.querySelector(".bubble").textContent = text;
+  messagesEl.appendChild(el);
+  scrollToBottom(true);
+}
+
+function ensureTurn() {
+  if (state.currentTurn) return state.currentTurn;
+  const el = document.createElement("div");
+  el.className = "msg assistant";
+  el.innerHTML =
+    '<div class="avatar">AI</div>' +
+    '<div class="body">' +
+      '<details class="reasoning" hidden><summary>推理过程</summary><div class="reasoning-text"></div></details>' +
+      '<div class="answer"></div>' +
+      '<div class="tools"></div>' +
+      '<div class="todos-wrap"></div>' +
+    "</div>";
+  messagesEl.appendChild(el);
+  state.currentTurn = {
+    el,
+    reasoning: el.querySelector("details.reasoning"),
+    reasoningText: el.querySelector(".reasoning-text"),
+    answer: el.querySelector(".answer"),
+    tools: el.querySelector(".tools"),
+    todos: el.querySelector(".todos-wrap"),
+    toolCards: new Map(),
+    answerText: "",
+    reasoningBuffer: "",
+  };
+  scrollToBottom();
+  return state.currentTurn;
+}
+
+function appendContent(text) {
+  const turn = ensureTurn();
+  turn.answerText += text;
+  turn.answer.innerHTML = renderMarkdown(turn.answerText);
+  scrollToBottom();
+}
+
+function appendReasoning(text) {
+  const turn = ensureTurn();
+  turn.reasoningBuffer += text;
+  turn.reasoning.hidden = false;
+  turn.reasoning.open = true;
+  turn.reasoningText.textContent = turn.reasoningBuffer;
+  scrollToBottom();
+}
+
+function toolCard(turn, payload) {
+  let card = state.currentTurn && state.currentTurn.toolCards.get(payload.call_id || "");
+  if (!card) {
+    card = document.createElement("div");
+    card.className = "tool";
+    card.innerHTML =
+      '<div class="tool-head"><span class="tool-name"></span><span class="tool-state">运行中…</span></div>' +
+      '<pre class="tool-args"></pre><pre class="tool-result"></pre>';
+    const head = card.querySelector(".tool-head");
+    head.addEventListener("click", () => card.classList.toggle("collapsed"));
+    turn.tools.appendChild(card);
+    if (payload.call_id) turn.toolCards.set(payload.call_id, card);
+  }
+  card.querySelector(".tool-name").textContent = payload.name || "tool";
+  const args = card.querySelector(".tool-args");
+  args.textContent = payload.arguments ? prettyJSON(payload.arguments) : "";
+  const result = card.querySelector(".tool-result");
+  if (payload.phase === "start") {
+    card.classList.remove("done", "failed");
+    card.querySelector(".tool-state").textContent = "运行中…";
+    card.classList.add("collapsed");
+  } else {
+    card.classList.remove("collapsed");
+    card.classList.add(payload.failed ? "failed" : "done");
+    card.querySelector(".tool-state").textContent = payload.failed ? "失败" : "完成";
+    if (payload.result) result.textContent = payload.result;
+  }
+  scrollToBottom();
+}
+
+function prettyJSON(text) {
+  try { return JSON.stringify(JSON.parse(text), null, 2); } catch (_) { return text; }
+}
+
+function renderTodos(items) {
+  const turn = ensureTurn();
+  const wrap = document.createElement("div");
+  wrap.className = "todos";
+  let html = '<div class="todos-title">任务列表</div><ul>';
+  for (const item of items || []) {
+    const status = item.status || "pending";
+    const icon = status === "completed" ? "✓" : status === "in_progress" ? "◐" : "○";
+    const cls = status === "completed" ? "done" : status === "in_progress" ? "active" : "";
+    html += '<li class="' + cls + '"><span>' + icon + "</span><span>" + escapeHtml(item.content || "") + "</span></li>";
+  }
+  html += "</ul>";
+  wrap.innerHTML = html;
+  turn.todos.appendChild(wrap);
+  scrollToBottom();
+}
+
+function renderQA(question, answer) {
+  const turn = ensureTurn();
+  const el = document.createElement("div");
+  el.className = "qa";
+  el.innerHTML = '<div class="q"></div><div class="a"></div>';
+  el.querySelector(".q").textContent = "提问：" + question;
+  el.querySelector(".a").textContent = "回答：" + (answer || "（取消）");
+  turn.todos.appendChild(el);
+  scrollToBottom();
+}
+
+function showError(message) {
+  const turn = ensureTurn();
+  const el = document.createElement("div");
+  el.className = "error-banner";
+  el.textContent = message;
+  turn.todos.appendChild(el);
+  scrollToBottom();
+}
+
+function setRunning(running, label) {
+  state.running = running;
+  $("sendBtn").disabled = running;
+  $("stopBtn").hidden = !running;
+  $("agentSel").disabled = running;
+  $("modelSel").disabled = running;
+  $("status").classList.toggle("running", running);
+  $("status").textContent = label || (running ? "运行中" : "就绪");
+}
+
+function currentAgent() {
+  return state.agents.find((a) => a.name === $("agentSel").value) || null;
+}
+
+function populateAgents(defaultAgent) {
+  const sel = $("agentSel");
+  sel.innerHTML = "";
+  for (const agent of state.agents) {
+    const opt = document.createElement("option");
+    opt.value = agent.name;
+    opt.textContent = agent.description && agent.description !== agent.name
+      ? agent.name + " · " + agent.description
+      : agent.name;
+    sel.appendChild(opt);
+  }
+  if (defaultAgent && state.agents.some((a) => a.name === defaultAgent)) sel.value = defaultAgent;
+  populateModels();
+}
+
+function populateModels(selected) {
+  const sel = $("modelSel");
+  const agent = currentAgent();
+  sel.innerHTML = "";
+  const def = document.createElement("option");
+  def.value = "";
+  def.textContent = agent ? "默认 · " + (agent.default_model || "未配置") : "默认模型";
+  sel.appendChild(def);
+  for (const model of state.models) {
+    const opt = document.createElement("option");
+    opt.value = model;
+    opt.textContent = model;
+    sel.appendChild(opt);
+  }
+  sel.value = selected && (selected === "" || state.models.includes(selected)) ? selected : "";
+}
+
+function clearSession() {
+  state.sessionId = null;
+  showEmpty();
+  setRunning(false, "就绪");
+  highlightSession();
+  inputEl.focus();
+}
+
+function highlightSession() {
+  document.querySelectorAll(".session-item").forEach((el) => {
+    el.classList.toggle("active", el.dataset.id === state.sessionId);
+  });
+}
+
+async function refreshSessions() {
+  try {
+    const res = await fetch("/api/sessions?limit=40");
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = $("sessionList");
+    list.innerHTML = "";
+    for (const item of data.sessions || []) {
+      const btn = document.createElement("button");
+      btn.className = "session-item";
+      btn.dataset.id = item.id;
+      btn.innerHTML = '<span class="title"></span><span class="meta"></span>';
+      btn.querySelector(".title").textContent = item.title || "(空会话)";
+      btn.querySelector(".meta").textContent =
+        item.agent + " · " + (item.turns || 0) + " 轮";
+      btn.addEventListener("click", () => loadSession(item.id));
+      list.appendChild(btn);
+    }
+    highlightSession();
+  } catch (_) { /* sidebar is best-effort */ }
+}
+
+async function loadSession(id) {
+  if (state.running) return;
+  try {
+    const res = await fetch("/api/sessions/" + encodeURIComponent(id));
+    if (!res.ok) throw new Error((await res.json()).error || "无法加载会话");
+    const data = await res.json();
+    state.sessionId = data.session.id;
+    if (data.session.agent && state.agents.some((a) => a.name === data.session.agent)) {
+      $("agentSel").value = data.session.agent;
+    }
+    populateModels(data.session.model || "");
+    renderHistory(data.events || []);
+    highlightSession();
+    setRunning(false, "已恢复 " + data.session.id);
+  } catch (err) {
+    showError(err.message || String(err));
+  }
+}
+
+function renderHistory(events) {
+  clearMessages();
+  let lastTool = null;
+  for (const ev of events) {
+    switch (ev.type) {
+      case "user":
+        addUserMessage(ev.content || "");
+        state.currentTurn = null;
+        lastTool = null;
+        break;
+      case "assistant": {
+        const turn = ensureTurn();
+        turn.answerText = ev.content || "";
+        turn.answer.innerHTML = renderMarkdown(turn.answerText);
+        break;
+      }
+      case "reasoning": {
+        const turn = ensureTurn();
+        turn.reasoningBuffer = (turn.reasoningBuffer ? turn.reasoningBuffer + "\n" : "") + (ev.content || "");
+        turn.reasoning.hidden = false;
+        turn.reasoning.open = false;
+        turn.reasoningText.textContent = turn.reasoningBuffer;
+        break;
+      }
+      case "tool": {
+        const turn = ensureTurn();
+        if (ev.status === "start") {
+          lastTool = { name: ev.name, callId: ev.id || "" };
+          toolCard(turn, {
+            phase: "start", name: ev.name, call_id: ev.id || "",
+            arguments: ev.arguments || "",
+          });
+        } else {
+          toolCard(turn, {
+            phase: "end", name: ev.name || (lastTool && lastTool.name) || "tool",
+            call_id: lastTool ? lastTool.callId : "",
+            result: ev.result || "",
+            failed: ev.status === "error",
+          });
+          lastTool = null;
+        }
+        break;
+      }
+      case "question":
+        renderQA(ev.content || "", ev.result || "");
+        break;
+      case "todo":
+        renderTodos(ev.todos || []);
+        break;
+      default:
+        break;
+    }
+  }
+  scrollToBottom(true);
+}
+
+function handleEvent(ev) {
+  switch (ev.type) {
+    case "session":
+      state.sessionId = ev.id;
+      $("status").textContent = "运行中";
+      break;
+    case "content":
+      appendContent(ev.text || "");
+      break;
+    case "reasoning":
+      appendReasoning(ev.text || "");
+      break;
+    case "tool":
+      toolCard(ensureTurn(), ev);
+      break;
+    case "todos":
+      renderTodos(ev.items);
+      break;
+    case "question":
+      openQuestion(ev);
+      break;
+    case "approval":
+      openApproval(ev);
+      break;
+    case "error":
+      showError(ev.message || "未知错误");
+      break;
+    case "done":
+      setRunning(false, ev.stop === "cancelled" ? "已停止" : ev.stop === "error" ? "出错" : "就绪");
+      refreshSessions();
+      break;
+    default:
+      break;
+  }
+}
+
+function parseSSE(chunk, buffer, onEvent) {
+  buffer += chunk;
+  let idx;
+  while ((idx = buffer.indexOf("\n\n")) >= 0) {
+    const raw = buffer.slice(0, idx);
+    buffer = buffer.slice(idx + 2);
+    for (const line of raw.split("\n")) {
+      if (!line.startsWith("data: ")) continue;
+      try { onEvent(JSON.parse(line.slice(6))); } catch (_) { /* ignore malformed frame */ }
+    }
+  }
+  return buffer;
+}
+
+async function sendPrompt() {
+  if (state.running) return;
+  const prompt = inputEl.value.trim();
+  if (!prompt) return;
+
+  addUserMessage(prompt);
+  state.currentTurn = null;
+  inputEl.value = "";
+  inputEl.style.height = "auto";
+  setRunning(true, "运行中");
+
+  const body = {
+    agent: $("agentSel").value,
+    prompt,
+  };
+  if ($("modelSel").value) body.model = $("modelSel").value;
+  if (state.sessionId) body.session_id = state.sessionId;
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      let message = "请求失败：" + res.status;
+      try { message = (await res.json()).error || message; } catch (_) {}
+      showError(message);
+      setRunning(false, "出错");
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer = parseSSE(decoder.decode(value, { stream: true }), buffer, handleEvent);
+    }
+    if (state.running) {
+      setRunning(false, "连接结束");
+      refreshSessions();
+    }
+  } catch (err) {
+    showError("连接中断：" + (err.message || err));
+    setRunning(false, "连接中断");
+  }
+}
+
+async function stopRun() {
+  if (!state.running || !state.sessionId) return;
+  try {
+    await fetch("/api/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_id: state.sessionId }),
+    });
+  } catch (_) { /* the stream will end on its own */ }
+}
+
+function closeModal() {
+  $("modal").hidden = true;
+  $("modalDetail").hidden = true;
+  $("questionBox").hidden = true;
+  $("optionList").innerHTML = "";
+  $("questionInput").value = "";
+  $("modalActions").innerHTML = "";
+}
+
+async function respond(payload) {
+  closeModal();
+  try {
+    await fetch("/api/respond", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (_) { /* the waiting turn will time out with the connection */ }
+}
+
+function openApproval(ev) {
+  $("modalTitle").textContent = "工具调用需要确认";
+  $("modalText").textContent = ev.summary || ("调用工具 " + ev.tool);
+  if (ev.detail) {
+    $("modalDetail").hidden = false;
+    $("modalDetail").textContent = prettyJSON(ev.detail);
+  }
+  const actions = $("modalActions");
+  actions.innerHTML = "";
+
+  const allow = document.createElement("button");
+  allow.className = "primary";
+  allow.textContent = "允许本次";
+  allow.onclick = () => respond({ id: ev.id, approved: true });
+
+  const always = document.createElement("button");
+  always.textContent = "本会话允许";
+  always.onclick = () => respond({ id: ev.id, approved: true, remember: true });
+
+  const deny = document.createElement("button");
+  deny.className = "danger";
+  deny.textContent = "拒绝";
+  deny.onclick = () => respond({ id: ev.id, approved: false });
+
+  actions.append(deny, always, allow);
+  $("modal").hidden = false;
+}
+
+function openQuestion(ev) {
+  $("modalTitle").textContent = "Agent 提问";
+  $("modalText").textContent = ev.question || "";
+  $("questionBox").hidden = false;
+  const options = $("optionList");
+  options.innerHTML = "";
+  for (const option of ev.options || []) {
+    const btn = document.createElement("button");
+    btn.textContent = option;
+    btn.onclick = () => respond({ id: ev.id, value: option });
+    options.appendChild(btn);
+  }
+  const actions = $("modalActions");
+  actions.innerHTML = "";
+  const cancel = document.createElement("button");
+  cancel.textContent = "取消";
+  cancel.onclick = () => respond({ id: ev.id, value: "" });
+  const submit = document.createElement("button");
+  submit.className = "primary";
+  submit.textContent = "提交";
+  submit.onclick = () => respond({ id: ev.id, value: $("questionInput").value });
+  actions.append(cancel, submit);
+  $("modal").hidden = false;
+  setTimeout(() => $("questionInput").focus(), 0);
+}
+
+function autoGrow() {
+  inputEl.style.height = "auto";
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 200) + "px";
+}
+
+async function bootstrap() {
+  try {
+    const res = await fetch("/api/bootstrap");
+    if (!res.ok) throw new Error("无法加载配置");
+    const data = await res.json();
+    state.agents = data.agents || [];
+    state.models = data.models || [];
+    state.defaultModel = data.default_model || "";
+    $("workdir").textContent = data.workdir || "";
+    $("version").textContent = data.version ? "v" + String(data.version).split("+")[0] : "";
+    $("logoutBtn").hidden = !data.auth_enabled;
+    populateAgents(data.default_agent);
+    showEmpty();
+    refreshSessions();
+  } catch (err) {
+    messagesEl.innerHTML = '<div class="empty"><strong>无法连接 Oni3</strong><div class="hint">' +
+      escapeHtml(err.message || String(err)) + "</div></div>";
+  }
+}
+
+$("newChat").addEventListener("click", () => { if (!state.running) clearSession(); });
+$("sendBtn").addEventListener("click", sendPrompt);
+$("stopBtn").addEventListener("click", stopRun);
+$("logoutBtn").addEventListener("click", async () => {
+  try { await fetch("/api/logout", { method: "POST" }); } catch (_) {}
+  window.location.reload();
+});
+$("agentSel").addEventListener("change", () => {
+  if (state.running) return;
+  populateModels();
+  if (state.sessionId || messagesEl.querySelector(".msg")) {
+    clearSession();
+  } else {
+    showEmpty();
+  }
+});
+inputEl.addEventListener("input", autoGrow);
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    sendPrompt();
+  }
+});
+messagesEl.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".copy-code");
+  if (!btn) return;
+  const code = btn.closest(".code-block").querySelector("code");
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code.innerText);
+    btn.textContent = "已复制";
+    setTimeout(() => { btn.textContent = "复制"; }, 1200);
+  } catch (_) {}
+});
+
+bootstrap();
+</script>
+</body>
+</html>

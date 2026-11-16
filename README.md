@@ -6,6 +6,7 @@ Oni3 is an intelligent AI Agent command-line tool based on the [CloudWeGo Eino](
 
 - **Intelligent Agent System**: AI Agent based on ReAct pattern with tool calling and reasoning capabilities
 - **Interactive TUI**: Terminal UI for real-time conversations with agents, including slash commands, tool approval and session resume
+- **Web Mode**: Local browser interface with streaming replies, tool cards, approvals, shared session history and optional token authentication
 - **ACP Agent Mode**: Runs as an [Agent Client Protocol](https://agentclientprotocol.com) agent so editors like Zed can drive Oni3
 - **First-Run Onboarding**: Common providers ship as built-in presets; pick one, enter an API key and import its models without editing YAML
 - **Rich Tool Ecosystem**: Built-in various tools including search, browser, command line, HTTP requests, etc.
@@ -268,7 +269,36 @@ Supported ACP surface:
 
 Note: logs are written to `~/.oni3/oni3.log` — stdout of the `acp` command is reserved for the protocol.
 
-### 5. MCP Server Mode
+### 5. Web Mode
+
+Serve the configured agents in a local browser interface:
+
+```bash
+oni3 web                                  # http://127.0.0.1:8080
+oni3 web --agent search_agent --open      # pick a default agent and open the browser
+oni3 web --token my-secret                # require a token
+ONI3_WEB_TOKEN=my-secret oni3 web         # token from the environment
+oni3 web --addr 0.0.0.0:8080 --token my-secret
+```
+
+The interface provides:
+
+- streaming replies, reasoning blocks and tool call cards
+- agent and per-turn model selectors
+- `ask_user` prompts and dangerous-tool approvals rendered in the page
+- a session sidebar backed by the same `~/.oni3/sessions/*.jsonl` files as the TUI and ACP, so a chat can be resumed from any interface
+
+Authentication is optional and disabled by default. Set `--token` (or `ONI3_WEB_TOKEN`) to require it:
+
+- `--open` signs the browser in through a one-time `?token=` URL that is exchanged for a 7-day HttpOnly cookie and removed from the address bar; without `--open`, enter the token on the login page
+- API clients can instead send `Authorization: Bearer <token>`, `X-Oni3-Token: <token>` or `?token=<token>`
+- unauthenticated API requests return `401`; the page shows a login form, and the 锁定 button clears the cookie
+
+The server listens on `127.0.0.1` by default. Binding it to a non-loopback address without a token exposes the configured shell and file tools to anyone who can reach the port; a warning is printed in that case. Press Ctrl+C to stop the server.
+
+The page uses a small HTTP API: `/api/bootstrap`, `/api/agents`, `/api/models`, `/api/sessions`, `/api/chat` (Server-Sent Events), `/api/respond` and `/api/cancel`.
+
+### 6. MCP Server Mode
 
 Run Oni3 itself as a Model Context Protocol server. It exposes three tools:
 
@@ -321,7 +351,7 @@ Example client configuration:
 }
 ```
 
-### 6. Configuration Example
+### 7. Configuration Example
 
 Here's a complete configuration example:
 

@@ -79,9 +79,10 @@ The same directory can be given with --cwd/-C.`,
 			fmt.Fprintf(os.Stderr, "Note: built-in agent unavailable: %v\n", err)
 		}
 
-		// The MCP server mode resolves tools immediately and initializes the
-		// manager itself. Other commands keep the non-blocking startup.
-		if cmd.Name() != "mcp" {
+		// The MCP server and web modes resolve tools immediately and
+		// initialize the manager themselves. Other commands keep the
+		// non-blocking startup.
+		if cmd.Name() != "mcp" && cmd.Name() != "web" {
 			go func() {
 				// Use command context for cancellation when command ends
 				ctx := cmd.Context()

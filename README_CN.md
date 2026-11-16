@@ -6,6 +6,7 @@ Oni3 是一个基于 [CloudWeGo Eino](https://github.com/cloudwego/eino) 框架�
 
 - **智能 Agent 系统**：基于 ReAct 模式的 AI Agent，支持工具调用和推理
 - **交互式 TUI**：基于 TUI 的终端界面，可与 Agent 实时对话，支持斜杠命令、工具审批与会话恢复
+- **Web 模式**：本地浏览器界面，支持流式回复、工具卡片、审批操作、共享会话历史与可选 Token 认证
 - **ACP Agent 模式**：可作为 [Agent Client Protocol](https://agentclientprotocol.com) Agent 运行，供 Zed 等编辑器接入
 - **首次运行引导**：内置常用 provider 预设，在界面中选择、输入 API Key 并导入模型，无需编辑 YAML
 - **丰富的工具生态**：内置多种工具，包括搜索、浏览器、命令行、HTTP 请求等
@@ -267,7 +268,36 @@ Zed 配置示例（`settings.json`）：
 
 注意：日志写入 `~/.oni3/oni3.log`——`acp` 命令的 stdout 专用于协议通信。
 
-### 5. MCP 服务端模式
+### 5. Web 模式
+
+在本地浏览器中使用已配置的 Agent：
+
+```bash
+oni3 web                                  # http://127.0.0.1:8080
+oni3 web --agent search_agent --open      # 指定默认 Agent 并自动打开浏览器
+oni3 web --token my-secret                # 启用 Token 认证
+ONI3_WEB_TOKEN=my-secret oni3 web         # 从环境变量读取 Token
+oni3 web --addr 0.0.0.0:8080 --token my-secret
+```
+
+界面能力：
+
+- 流式回复、推理过程折叠与工具调用卡片
+- Agent 选择器，以及每轮可切换的模型选择器
+- `ask_user` 提问与危险工具审批直接在页面中完成
+- 侧栏会话列表与 TUI、ACP 共用 `~/.oni3/sessions/*.jsonl`，任意界面都可恢复
+
+Token 认证可选，默认关闭。通过 `--token`（或 `ONI3_WEB_TOKEN`）启用后：
+
+- `--open` 会通过一次性 `?token=` URL 自动登录，将其换成 7 天有效的 HttpOnly Cookie，并从地址栏移除 Token；未使用 `--open` 时在登录页输入 Token 即可
+- API 客户端也可使用 `Authorization: Bearer <token>`、`X-Oni3-Token: <token>` 或 `?token=<token>`
+- 未认证的 API 请求返回 `401`；页面显示登录表单，右上角“锁定”按钮会清除 Cookie
+
+服务默认只监听 `127.0.0.1`。若绑定到非回环地址且未设置 Token，已配置的 shell 与文件工具会暴露给任何能访问该端口的人，启动时会打印警告。按 Ctrl+C 停止服务。
+
+页面使用一组小型 HTTP API：`/api/bootstrap`、`/api/agents`、`/api/models`、`/api/sessions`、`/api/chat`（Server-Sent Events）、`/api/respond` 与 `/api/cancel`。
+
+### 6. MCP 服务端模式
 
 将 Oni3 本身作为 Model Context Protocol 服务器运行，提供三个工具：
 
@@ -320,7 +350,7 @@ stdout 专用于协议通信，日志写入 `~/.oni3/oni3.log`。
 }
 ```
 
-### 6. 配置示例
+### 7. 配置示例
 
 以下是一个完整的配置示例：
 
