@@ -121,12 +121,14 @@ The TUI supports slash commands (type `/` to see the command palette with argume
 | `/agent <name>` | Switch agent (agent mode) |
 | `/model <name>` | Switch model without restarting |
 | `/provider [name]` | Choose a provider, fetch its models and add one (switch immediately) or all |
-| `/skill <name>` | Select a configured skill; `/skill off` clears the selection |
+| `/skill <name> [message]` | Select a configured skill; with a message, run that message as the turn right away (`/skill:coder 修复登录` and `/skill coder 修复登录` are the same command); `/skill off` clears the selection |
 | `/resume [id\|#]` | List or resume saved sessions (conversation context is restored) |
 | `/theme <name> [light\|dark]` | Switch color theme (every theme ships light and dark variants): `violet` (default), `catppuccin`, `nord`, `gruvbox`, `tokyo-night`, `dracula`, `mono` |
 | `/mcp [enable\|disable] [name\|all]` | Open the MCP server management panel, or toggle servers for the current session |
 | `/tools` | List available tools |
 | `/status` | Show current agent/model/skill/session |
+
+Any command argument can be attached with a colon instead of a space (`/skill:coder`, `/model:gpt4`); the palette keeps the separator you typed.
 
 Switching the model with `/model` is remembered: the choice is stored per agent in `~/.oni3/agent_models.json` and restored on the next start. This only applies to agents whose configured model is the default model (`default_model`, or the first model when it is unset); an agent that pins its own `model:` in `config.yml` always keeps it.
 

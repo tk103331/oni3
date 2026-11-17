@@ -188,13 +188,30 @@ func (app *AgentApp) slashCommands() []SlashCommand {
 		{Name: "agent", Args: "<name>", Description: fmt.Sprintf("切换 agent（当前: %s）", app.agentName), Values: sortedKeys(cfg.Agents), ValueLabels: agentValueLabels(cfg)},
 		{Name: "model", Args: "<name>", Description: fmt.Sprintf("切换模型（当前: %s）", app.currentModelName()), Values: sortedKeys(cfg.Models), ValueLabels: modelValueLabels(cfg)},
 		{Name: "provider", Args: "[name]", Description: "选择 provider 并添加模型", Values: sortedKeys(cfg.Providers), ValueLabels: providerValueLabels(cfg)},
-		{Name: "skill", Args: "<name>", Description: fmt.Sprintf("选择 skill（当前: %s）", app.skillName()), Values: skillValues, ValueLabels: skillValueLabels(cfg), KeepArgs: true},
+		{Name: "skill", Args: "<name> [消息]", Description: fmt.Sprintf("选择 skill，可附带一条消息直接执行（/skill:coder 也可以；当前: %s）", app.skillName()), Values: skillValues, ValueLabels: skillValueLabels(cfg), KeepArgs: true},
 		{Name: "mcp", Args: "[enable|disable] [name]", Description: mcpDesc},
 		{Name: "theme", Args: "<name> [light|dark]", Description: fmt.Sprintf("切换颜色主题（当前: %s/%s）", app.model.ThemeName(), themeModeName(app.model.DarkMode())), Values: themeNames(), ValueLabels: app.themeValueLabels()},
 		{Name: "tools", Description: "列出当前可用工具"},
 		{Name: "status", Description: "显示当前会话状态"},
 		{Name: "resume", Args: "<编号|id>", Description: "恢复历史会话（不带参数列出会话）", Values: recentSessionIDs(session.KindAgent, 10), ValueLabels: resumeValueLabels(session.KindAgent, 10)},
 	}
+}
+
+// remainderAfter drops the first n whitespace-separated words from line and
+// returns the rest unchanged (trimmed). Commands that take a free-form
+// message as their trailing argument use it so the message keeps its inner
+// spacing instead of being split into fields.
+func remainderAfter(line string, n int) string {
+	rest := strings.TrimSpace(line)
+	for i := 0; i < n; i++ {
+		rest = strings.TrimLeft(rest, " \t")
+		cut := strings.IndexAny(rest, " \t")
+		if cut < 0 {
+			return ""
+		}
+		rest = rest[cut:]
+	}
+	return strings.TrimSpace(rest)
 }
 
 // sortedKeysWithLabels returns the sorted keys of a map and their labels.
@@ -357,6 +374,11 @@ func (app *AgentApp) themeValueLabels() []string {
 
 // executeSlash handles agent-mode commands.
 func (app *AgentApp) executeSlash(input string) CommandResult {
+	// "/skill:coder xxx" is the same command line as "/skill coder xxx";
+	// normalizing here keeps every handler on whitespace splitting.
+	if command, rest, sep := slashSplit(input); sep == ":" {
+		input = strings.TrimSpace(command + " " + rest)
+	}
 	fields := strings.Fields(input)
 	if len(fields) == 0 {
 		return CommandResult{Message: "用法：/agent、/model、/provider、/skill、/mcp、/resume、/tools、/status", Error: true}
@@ -439,10 +461,16 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 
 	case "skill":
 		if arg == "" {
-			return CommandResult{Message: "用法：/skill <name>（用 /skill off 取消选择）\n可用 skill：" + strings.Join(append([]string{"off"}, sortedKeys(cfg.Skills)...), ", ") +
+			return CommandResult{Message: "用法：/skill <name> [消息] 或 /skill:<name> [消息]（用 /skill off 取消选择）\n带消息时选择 skill 并立即用它处理这条消息\n可用 skill：" + strings.Join(append([]string{"off"}, sortedKeys(cfg.Skills)...), ", ") +
 				"\n目录：" + strings.Join(config.SkillDirectories(), ", "), Error: true}
 		}
+		// Everything after the skill name is the message for the turn, so
+		// "/skill coder 修复登录 bug" selects coder and runs it right away.
+		message := remainderAfter(input, 2)
 		if arg == "off" || arg == "none" {
+			if message != "" {
+				return CommandResult{Message: "用法：/skill off（不带消息；取消选择后直接输入即可）", Error: true}
+			}
 			app.skill = ""
 			if err := app.rebuildAgent(); err != nil {
 				return CommandResult{Message: fmt.Sprintf("取消 skill 选择失败: %v", err), Error: true}
@@ -454,13 +482,32 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 		if _, ok := cfg.Skills[arg]; !ok {
 			return CommandResult{Message: fmt.Sprintf("skill 不存在: %s\n可用 skill：%s", arg, strings.Join(sortedKeys(cfg.Skills), ", ")), Error: true}
 		}
+		// Executing a skill needs a free turn; refuse before switching so the
+		// active skill and the transcript stay consistent.
+		if message != "" && app.model.isWaiting {
+			return CommandResult{Message: "当前回复还在进行中：先按两次 Esc 停止，或等它结束后再执行 skill", Error: true}
+		}
+		previous := app.skill
 		app.skill = arg
 		if err := app.rebuildAgent(); err != nil {
+			// Keep the interface state truthful: the skill is not active.
+			app.skill = previous
 			return CommandResult{Message: fmt.Sprintf("选择 skill 失败: %v", err), Error: true}
 		}
 		app.syncSessionConfig()
 		app.registerCommands()
-		return CommandResult{Message: "已选择 skill: " + arg}
+		if message == "" {
+			return CommandResult{Message: "已选择 skill: " + arg}
+		}
+
+		// Execute the skill: the message becomes this turn's input, so the
+		// skill's prompt and tools apply to it without a second keystroke.
+		app.model.appendCommandMessage("已选择 skill: "+arg, false)
+		cmd := app.model.startTurn(message)
+		if cmd == nil {
+			return CommandResult{Message: "当前回复还在进行中，消息未发送", Error: true}
+		}
+		return CommandResult{Cmd: cmd}
 
 	case "theme":
 		if arg == "" {

@@ -62,7 +62,9 @@ func (s *Service) runSlashCommand(ctx context.Context, session *acpSession, prom
 	body := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(prompt), "/"))
 	name := body
 	arg := ""
-	if i := strings.IndexAny(body, " \t"); i >= 0 {
+	// A colon right after the command name is an alternative separator
+	// ("/skill:coder"), matching the TUI.
+	if i := strings.IndexAny(body, " \t:"); i >= 0 {
 		name, arg = body[:i], strings.TrimSpace(body[i+1:])
 	}
 	switch strings.ToLower(name) {
@@ -114,17 +116,23 @@ func (s *Service) commandSwitchModel(ctx context.Context, session *acpSession, a
 // commandSwitchSkill mirrors session/set_config_option skill switches for
 // the /skill command. Without an argument it lists the configured skills.
 func (s *Service) commandSwitchSkill(ctx context.Context, session *acpSession, arg string) string {
-	if arg == "" {
-		return "用法：/skill <name>（用 /skill off 取消选择）\n可用 skill：" +
+	// The argument is "<name> [消息]": a message is accepted for parity with
+	// the TUI, but ACP turns run from the next prompt, so it is not sent here.
+	name, message := arg, ""
+	if i := strings.IndexAny(arg, " \t"); i >= 0 {
+		name, message = arg[:i], strings.TrimSpace(arg[i+1:])
+	}
+	if name == "" {
+		return "用法：/skill <name> [消息] 或 /skill:<name>（用 /skill off 取消选择）\n可用 skill：" +
 			strings.Join(append([]string{"off"}, sortedKeys(s.cfg.Skills)...), ", ")
 	}
 	skill := ""
-	if arg != optionOff {
-		if _, ok := s.cfg.Skills[arg]; !ok {
-			return "skill 不存在: " + arg + "\n可用 skill：" +
+	if name != optionOff {
+		if _, ok := s.cfg.Skills[name]; !ok {
+			return "skill 不存在: " + name + "\n可用 skill：" +
 				strings.Join(sortedKeys(s.cfg.Skills), ", ")
 		}
-		skill = arg
+		skill = name
 	}
 	if err := s.rebuildSessionAgent(session, session.modelOverride, skill); err != nil {
 		return fmt.Sprintf("切换 skill 失败: %v", err)
@@ -134,6 +142,9 @@ func (s *Service) commandSwitchSkill(ctx context.Context, session *acpSession, a
 	s.notifyConfigOptions(ctx, session)
 	if skill == "" {
 		return "已取消 skill 选择。"
+	}
+	if message != "" {
+		return "已选择 skill: " + skill + "\n随后的 prompt 会使用该 skill；ACP 中不会就地执行这条消息。"
 	}
 	return "已选择 skill: " + skill
 }

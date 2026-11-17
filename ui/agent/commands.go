@@ -53,6 +53,26 @@ func (m *ViewModel) allCommands() []SlashCommand {
 	return append(builtinCommands(), m.slashCommands...)
 }
 
+// slashSplit splits a command body ("/skill:coder x") into the command name,
+// the rest of the line and the separator that ended the name. A colon directly
+// after the name is accepted as an alternative to a space, so "/skill:coder x"
+// and "/skill coder x" are the same command line. sep is empty while the name
+// is still being typed.
+func slashSplit(body string) (name, rest, sep string) {
+	// Only leading spaces are trimmed: a trailing space is what tells the
+	// palette that the command name is complete and values can be offered.
+	body = strings.TrimLeft(body, " \t")
+	i := strings.IndexAny(body, " \t:")
+	if i < 0 {
+		return strings.ToLower(body), "", ""
+	}
+	sep = " "
+	if body[i] == ':' {
+		sep = ":"
+	}
+	return strings.ToLower(body[:i]), strings.TrimSpace(body[i+1:]), sep
+}
+
 // executeSlashCommand runs a slash command typed into the input box.
 func (m *ViewModel) executeSlashCommand(line string) tea.Cmd {
 	body := strings.TrimSpace(strings.TrimPrefix(line, "/"))
@@ -61,12 +81,9 @@ func (m *ViewModel) executeSlashCommand(line string) tea.Cmd {
 		return nil
 	}
 
-	name := body
-	if i := strings.IndexAny(body, " \t"); i >= 0 {
-		name = body[:i]
-	}
+	name, _, _ := slashSplit(body)
 
-	switch strings.ToLower(name) {
+	switch name {
 	case "clear":
 		m.clearConversation()
 		return nil
@@ -155,12 +172,13 @@ func (m *ViewModel) paletteItems() []paletteItem {
 	raw := strings.TrimLeft(m.input, " \t")
 	body := strings.TrimPrefix(raw, "/")
 
+	name, rest, sep := slashSplit(body)
+
 	// Still typing the command name: filter commands by prefix.
-	if !strings.ContainsAny(body, " \t") {
-		prefix := strings.TrimSpace(body)
+	if sep == "" {
 		var items []paletteItem
 		for _, c := range m.allCommands() {
-			if prefix != "" && !strings.HasPrefix(strings.ToLower(c.Name), strings.ToLower(prefix)) {
+			if name != "" && !strings.HasPrefix(strings.ToLower(c.Name), name) {
 				continue
 			}
 			fill := "/" + c.Name
@@ -175,16 +193,16 @@ func (m *ViewModel) paletteItems() []paletteItem {
 	}
 
 	// Command chosen, suggesting argument values (one selectable row each).
-	fields := strings.SplitN(body, " ", 2)
-	name := fields[0]
-	argPrefix := strings.TrimSpace(fields[1])
+	argPrefix := rest
 	for _, c := range m.allCommands() {
 		if !strings.EqualFold(c.Name, name) || len(c.Values) == 0 {
 			continue
 		}
-		// A kept argument (KeepArgs) is already complete; typing continues as
-		// a message, so the palette must not offer the same values again.
-		if c.KeepArgs && containsFold(c.Values, argPrefix) {
+		// A kept argument (KeepArgs) is a value followed by free text: once the
+		// value is complete, or a message already follows it, the palette stops
+		// suggesting values so Enter executes the whole line instead of
+		// replacing the message with another value.
+		if c.KeepArgs && (containsFold(c.Values, argPrefix) || strings.ContainsAny(argPrefix, " \t")) {
 			return nil
 		}
 		var items []paletteItem
@@ -196,9 +214,11 @@ func (m *ViewModel) paletteItems() []paletteItem {
 			if i < len(c.ValueLabels) {
 				label = c.ValueLabels[i]
 			}
+			// Keep the separator the user typed: "/skill:cod" completes to
+			// "/skill:coder " instead of switching to the space form.
 			items = append(items, paletteItem{
 				line:     m.formatValueRow(c.Name, v, label),
-				fill:     "/" + c.Name + " " + v,
+				fill:     "/" + c.Name + sep + v,
 				exec:     !c.KeepArgs,
 				complete: c.KeepArgs,
 			})
@@ -228,11 +248,10 @@ func (m *ViewModel) formatValueRow(command, value, label string) string {
 func (m *ViewModel) paletteUsage() string {
 	raw := strings.TrimLeft(m.input, " \t")
 	body := strings.TrimPrefix(raw, "/")
-	if !strings.ContainsAny(body, " \t") {
+	name, _, sep := slashSplit(body)
+	if sep == "" {
 		return ""
 	}
-	fields := strings.SplitN(body, " ", 2)
-	name := fields[0]
 	for _, c := range m.allCommands() {
 		if !strings.EqualFold(c.Name, name) {
 			continue

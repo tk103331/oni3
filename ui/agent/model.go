@@ -599,6 +599,37 @@ func sendMsgCmd(text string, send func(string) error) tea.Cmd {
 	}
 }
 
+// startTurn begins a turn with text exactly as if it had been typed into the
+// input box: the user bubble appears, the spinner starts and the host callback
+// runs. It returns nil when the turn cannot start (empty text, no callback, or
+// a reply already in flight), so callers can report that instead of dropping
+// the message silently.
+func (m *ViewModel) startTurn(text string) tea.Cmd {
+	text = strings.TrimSpace(text)
+	if text == "" || m.onSendMsg == nil || m.isWaiting {
+		return nil
+	}
+
+	m.collapseFinishedTodos()
+	m.messages = append(m.messages, Message{Type: UserMessage, Content: text})
+	m.input = ""
+	m.cursor = 0
+	m.isWaiting = true
+	m.streamingContent = ""
+	m.reasoningContent = ""
+	m.errorMsg = ""
+	m.scrollOffset = 0
+	m.markDirty()
+	reportStatus("working", "", "正在处理："+text)
+
+	cmds := []tea.Cmd{sendMsgCmd(text, m.onSendMsg)}
+	if !m.spinnerStarted {
+		m.spinnerStarted = true
+		cmds = append(cmds, spinnerTickCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
 // spinnerTickCmd schedules the next spinner frame.
 func spinnerTickCmd() tea.Cmd {
 	return tea.Tick(120*time.Millisecond, func(t time.Time) tea.Msg {
@@ -910,29 +941,7 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// A finished task list folds away as the next turn begins.
-			m.collapseFinishedTodos()
-			m.messages = append(m.messages, Message{
-				Type:    UserMessage,
-				Content: m.input,
-			})
-
-			userInput := m.input
-			m.input = ""
-			m.cursor = 0
-			m.isWaiting = true
-			m.streamingContent = ""
-			m.reasoningContent = ""
-			m.errorMsg = ""
-			m.scrollOffset = 0
-			m.markDirty()
-			reportStatus("working", "", "正在处理："+userInput)
-
-			cmds := []tea.Cmd{sendMsgCmd(userInput, m.onSendMsg)}
-			if !m.spinnerStarted {
-				m.spinnerStarted = true
-				cmds = append(cmds, spinnerTickCmd())
-			}
-			return m, tea.Batch(cmds...)
+			return m, m.startTurn(m.input)
 
 		case tea.KeyBackspace:
 			m.backspace()

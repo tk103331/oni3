@@ -112,6 +112,19 @@ func TestRunSlashCommand(t *testing.T) {
 				t.Fatalf("skillOverride = %q, want review", sess.skillOverride)
 			}
 		}},
+		{"/skill:review", func(t *testing.T, reply string, sess *acpSession) {
+			// A colon right after the command name is the same as a space.
+			if sess.skillOverride != "review" {
+				t.Fatalf("colon form not applied: %q (%q)", sess.skillOverride, reply)
+			}
+		}},
+		{"/skill review 看看这个补丁", func(t *testing.T, reply string, sess *acpSession) {
+			// A trailing message is accepted, but an ACP turn comes from the
+			// next prompt, so the reply must say so.
+			if sess.skillOverride != "review" || !strings.Contains(reply, "prompt") {
+				t.Fatalf("skill with message: %q / %q", sess.skillOverride, reply)
+			}
+		}},
 		{"/skill off", func(t *testing.T, reply string, sess *acpSession) {
 			if sess.skillOverride != "" {
 				t.Fatalf("skillOverride = %q, want empty after off", sess.skillOverride)

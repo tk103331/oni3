@@ -119,12 +119,14 @@ TUI 内支持斜杠命令（输入 `/` 会显示命令面板与参数候选）�
 | `/agent <name>` | 切换 agent（agent 模式） |
 | `/model <name>` | 切换模型（无需重启） |
 | `/provider [name]` | 选择 provider 获取模型列表；单个添加并立即切换，或全部添加 |
-| `/skill <name>` | 选择配置中的 skill；`/skill off` 取消选择 |
+| `/skill <name> [消息]` | 选择配置中的 skill；带消息时立即把这条消息作为本轮输入执行（`/skill:coder 修复登录` 与 `/skill coder 修复登录` 等价）；`/skill off` 取消选择 |
 | `/resume [id\|编号]` | 列出或恢复历史会话（会一并恢复对话上下文） |
 | `/theme <name> [light\|dark]` | 切换颜色主题（每套主题均含明暗两套配色）：`violet`（默认）、`catppuccin`、`nord`、`gruvbox`、`tokyo-night`、`dracula`、`mono` |
 | `/mcp [enable\|disable] [name\|all]` | 打开 MCP 服务管理面板，或在本次会话中启用/禁用服务 |
 | `/tools` | 列出当前可用工具 |
 | `/status` | 显示当前 agent/model/skill/会话 |
+
+命令参数可以用冒号代替空格（`/skill:coder`、`/model:gpt4`），补全时会保留你输入的写法。
 
 用 `/model` 切换的模型会被记住：按 agent 保存在 `~/.oni3/agent_models.json`，下次启动自动沿用。只有「模型为默认模型」的 agent 会记住（`default_model`，未设置时取排序第一个模型）；在 `config.yml` 中为 agent 显式指定了 `model:` 的，始终以配置为准。
 
