@@ -143,9 +143,10 @@ func (s *Server) send(agentName string, raw json.RawMessage) (*taskRun, *Task, *
 	if message == nil {
 		return nil, nil, rpcError(CodeInvalidParams, "message is required")
 	}
-	if message.Role != "user" {
-		return nil, nil, rpcError(CodeInvalidParams, "message role must be user")
+	if !IsUserRole(message.Role) {
+		return nil, nil, rpcError(CodeInvalidParams, "message role must be ROLE_USER")
 	}
+	message.Role = RoleUser
 	if message.MessageID == "" {
 		message.MessageID = "msg-" + randomID()
 	}

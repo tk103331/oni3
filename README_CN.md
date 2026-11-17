@@ -58,7 +58,7 @@ git tag v0.1.0 && git push --tags
 ```
 
 GitHub Actions（`.github/workflows/release.yml`）会自动完成：
-1. goreleaser 构建 darwin/linux/windows × amd64/arm64 的 `oni3` 二进制，打包为 `oni3_<version>_<os>_<arch>.tar.gz`（Windows 为 `.zip`）（约 15 MB，未压缩的 stripped 二进制约 50 MB）并创建 Release
+1. goreleaser 构建 darwin/linux/windows × amd64/arm64 的 `oni3` 二进制，打包为 `oni3_<version>_<os>_<arch>.tar.xz`（Windows 为 `.zip`）（约 12–17 MB，未压缩的 stripped 二进制约 50 MB）并创建 Release
 2. 配置了仓库变量 `NPM_TRUSTED_PUBLISHING=true`（且 npm 包已配置 Trusted Publisher）时，通过 OIDC 发布 npm 包（版本号取自 tag，无需任何 token）
 3. 配置了 `TAP_GITHUB_TOKEN` secret 时更新 `tk103331/homebrew-tap` 的 formula
 4. 有 Scoop token（或复用 tap token）时更新 `tk103331/scoop-bucket` 的 manifest
@@ -284,9 +284,11 @@ oni3 web --addr 0.0.0.0:8080 --token my-secret
 界面能力：
 
 - 流式回复、推理过程折叠与工具调用卡片
-- Agent 选择器，以及每轮可切换的模型选择器
+- Agent 与模型选择器停靠在输入框下方，支持每轮切换模型
 - `ask_user` 提问与危险工具审批直接在页面中完成
-- 侧栏会话列表与 TUI、ACP 共用 `~/.oni3/sessions/*.jsonl`，任意界面都可恢复
+- 可搜索的侧栏会话列表与 TUI、ACP 共用 `~/.oni3/sessions/*.jsonl`，任意界面都可恢复
+- 明暗主题切换，并记住上次选择
+- 内置 `/docs` API 文档，覆盖 Web API、AG-UI、A2A 与 MCP
 
 Token 认证可选，默认关闭。通过 `--token`（或 `ONI3_WEB_TOKEN`）启用后：
 
@@ -296,17 +298,21 @@ Token 认证可选，默认关闭。通过 `--token`（或 `ONI3_WEB_TOKEN`）�
 
 服务默认只监听 `127.0.0.1`。若绑定到非回环地址且未设置 Token，已配置的 shell 与文件工具会暴露给任何能访问该端口的人，启动时会打印警告。按 Ctrl+C 停止服务。
 
-页面使用一组小型 HTTP API：`/api/bootstrap`、`/api/agents`、`/api/models`、`/api/sessions`、`/api/chat`（Server-Sent Events）、`/api/respond` 与 `/api/cancel`。
+页面使用一组小型 HTTP API：`/api/bootstrap`、`/api/agents`、`/api/models`、`/api/sessions`（可选 `q` 参数搜索标题、Agent、模型和消息内容）、`/api/chat`（Server-Sent Events）、`/api/respond` 与 `/api/cancel`。访问 `/docs` 可查看渲染后的 API 参考与协议调用示例。
 
-### 6. AG-UI 与 A2A
+### 6. AG-UI、A2A 与 MCP
 
-`oni3 web` 会在同一个监听地址上同时提供 AG-UI 与 A2A，并复用同一套 Token 认证。两种协议都走共享执行层，因此使用的 Agent、工具、审批、会话与模型选择与 TUI 完全一致。
+`oni3 web` 会在同一个监听地址上同时提供 AG-UI、A2A 与 MCP Server，并复用同一套 Token 认证。它们都走共享执行层，因此使用的 Agent、工具、审批、会话与模型选择与 TUI 完全一致。
 
 ```bash
 oni3 serve --token my-secret              # 等价于 web，也可使用 serve 命令
 oni3 web --agui=false                     # 关闭 AG-UI
 oni3 web --a2a=false                      # 关闭 A2A
+oni3 web --mcp=false                      # 关闭 MCP Server 端点
+oni3 serve --web=false --agui=false --a2a=false --mcp  # 仅协议模式，不启动网页
 ```
+
+`--web=false` 会关闭浏览器界面、Web API、登录页与 `/docs`，但保留 `/api/health` 和已启用的协议端点。`--web`、`--agui`、`--a2a`、`--mcp` 至少要保留一个；关闭网页时 `--open` 会被忽略。
 
 AG-UI：
 
@@ -322,10 +328,19 @@ A2A 1.0：
 - `GET /.well-known/agent-card.json` 与 `GET /agents/{agent}/.well-known/agent-card.json` 为每个 Agent 发布一张 Card
 - `POST /a2a` 与 `POST /agents/{agent}/a2a` 实现 JSON-RPC 2.0 方法 `SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`SubscribeToTask`（同时兼容 `message/send` 等 0.3 斜杠方法名）
 - 流式方法在 `text/event-stream` 帧中返回 JSON-RPC 响应，result 使用 `task`、`statusUpdate`、`artifactUpdate`、`message` 包装
+- 消息角色使用 A2A 1.0 的 `ROLE_USER` 与 `ROLE_AGENT`；同时兼容 0.3 的小写 `user` 与 `agent`，并统一按 1.0 形式输出
 - 任务状态使用 A2A 1.0 的 `TASK_STATE_*`；`ask_user` 与审批会把任务置为 `TASK_STATE_INPUT_REQUIRED`，针对该任务再次 `SendMessage` 即可恢复
 - 任务持久化在 `~/.oni3/a2a/tasks/`，重启后仍可查询与列出
 
-两种协议都不依赖第三方 A2A/AG-UI SDK；协议类型与传输实现位于 `protocol/agui` 与 `protocol/a2a`。
+AG-UI 与 A2A 不依赖第三方 A2A/AG-UI SDK；协议类型与传输实现位于 `protocol/agui` 与 `protocol/a2a`。
+
+MCP Server：
+
+- 这里 Oni3 作为 MCP Server 对外提供工具，与 `config.yml` 中作为客户端连接的外部 `mcp_servers` 是两件事
+- `POST /mcp` 是 Streamable HTTP 端点；`GET /mcp` 监听服务端通知，`DELETE /mcp` 终止会话
+- `GET /mcp/sse` 与 `POST /mcp/message?sessionId=...` 提供旧版 SSE 传输
+- 暴露与 `oni3 mcp` 相同的三个工具：`call_agent(agent, prompt, model?)`、`list_agents()` 与 `list_models()`
+- 使用与 Web 服务相同的 `Authorization: Bearer <token>` 认证头
 
 Oni3 也可以作为非流式客户端调用远端 A2A Agent。先在 `a2a_agents` 中登记远端 Agent，再通过 `a2a` 工具暴露给模型：
 
@@ -356,6 +371,8 @@ tools:
 ```bash
 oni3 mcp
 ```
+
+`oni3 web` 运行时，Oni3 也会作为 MCP Server，通过 `POST /mcp`（Streamable HTTP）或 `GET /mcp/sse`（旧版 SSE）提供同一组工具。使用 `--mcp=false` 可关闭这些 Server 端点。
 
 - `call_agent(agent, prompt, model?)`：运行任意已配置 agent，包括内置 OniThree
 - `list_agents()`：返回 agent 名称、描述和默认模型别名

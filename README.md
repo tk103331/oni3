@@ -58,7 +58,7 @@ git tag v0.1.0 && git push --tags
 ```
 
 GitHub Actions (`.github/workflows/release.yml`) will:
-1. build the `oni3` binary for darwin/linux/windows × amd64/arm64 with goreleaser, pack it as `oni3_<version>_<os>_<arch>.tar.gz` (`.zip` on Windows) (~15 MB instead of the ~50 MB stripped binary) and create a Release
+1. build the `oni3` binary for darwin/linux/windows × amd64/arm64 with goreleaser, pack it as `oni3_<version>_<os>_<arch>.tar.xz` (`.zip` on Windows) (~12–17 MB instead of the ~50 MB stripped binary) and create a Release
 2. publish the npm package via OIDC when the repository variable `NPM_TRUSTED_PUBLISHING=true` is set and the npm package has a GitHub Actions trusted publisher (version taken from the tag, no token needed)
 3. update the `tk103331/homebrew-tap` formula when the `TAP_GITHUB_TOKEN` secret is configured
 4. update the `tk103331/scoop-bucket` manifest when a Scoop token (or the tap token) is available
@@ -285,9 +285,11 @@ oni3 web --addr 0.0.0.0:8080 --token my-secret
 The interface provides:
 
 - streaming replies, reasoning blocks and tool call cards
-- agent and per-turn model selectors
+- agent and per-turn model selectors docked below the composer
 - `ask_user` prompts and dangerous-tool approvals rendered in the page
-- a session sidebar backed by the same `~/.oni3/sessions/*.jsonl` files as the TUI and ACP, so a chat can be resumed from any interface
+- a searchable session sidebar backed by the same `~/.oni3/sessions/*.jsonl` files as the TUI and ACP, so a chat can be resumed from any interface
+- light and dark themes with a persistent toggle
+- built-in API documentation at `/docs`, covering Web API, AG-UI, A2A and MCP
 
 Authentication is optional and disabled by default. Set `--token` (or `ONI3_WEB_TOKEN`) to require it:
 
@@ -297,17 +299,21 @@ Authentication is optional and disabled by default. Set `--token` (or `ONI3_WEB_
 
 The server listens on `127.0.0.1` by default. Binding it to a non-loopback address without a token exposes the configured shell and file tools to anyone who can reach the port; a warning is printed in that case. Press Ctrl+C to stop the server.
 
-The page uses a small HTTP API: `/api/bootstrap`, `/api/agents`, `/api/models`, `/api/sessions`, `/api/chat` (Server-Sent Events), `/api/respond` and `/api/cancel`.
+The page uses a small HTTP API: `/api/bootstrap`, `/api/agents`, `/api/models`, `/api/sessions` (optional `q` searches titles, agents, models and message text), `/api/chat` (Server-Sent Events), `/api/respond` and `/api/cancel`. Open `/docs` for the rendered API reference and protocol examples.
 
-### 6. AG-UI and A2A
+### 6. AG-UI, A2A and MCP
 
-`oni3 web` also exposes AG-UI and A2A on the same listener and behind the same token authentication. Both protocols run through the shared execution layer, so they use the same agents, tools, approvals, sessions and model selection as the TUI.
+`oni3 web` also exposes AG-UI, A2A and an MCP server on the same listener and behind the same token authentication. They run through the shared execution layer, so they use the same agents, tools, approvals, sessions and model selection as the TUI.
 
 ```bash
 oni3 serve --token my-secret              # same as web, also reachable as `serve`
 oni3 web --agui=false                     # disable AG-UI
 oni3 web --a2a=false                      # disable A2A
+oni3 web --mcp=false                      # disable MCP server endpoints
+oni3 serve --web=false --agui=false --a2a=false --mcp  # protocol-only, no browser UI
 ```
+
+`--web=false` disables the browser interface, Web API, login page and `/docs`; `/api/health` and the enabled protocol endpoints remain available. At least one of `--web`, `--agui`, `--a2a` and `--mcp` must stay enabled. `--open` is ignored when the web interface is disabled.
 
 AG-UI:
 
@@ -323,10 +329,19 @@ A2A 1.0:
 - `GET /.well-known/agent-card.json` and `GET /agents/{agent}/.well-known/agent-card.json` publish one card per agent
 - `POST /a2a` and `POST /agents/{agent}/a2a` implement JSON-RPC 2.0 methods `SendMessage`, `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask` and `SubscribeToTask` (the 0.3 slash names such as `message/send` are accepted too)
 - streaming methods return JSON-RPC responses in `text/event-stream` frames, using `task`, `statusUpdate`, `artifactUpdate` and `message` result wrappers
+- message roles use the A2A 1.0 enum values `ROLE_USER` and `ROLE_AGENT`; the 0.3 lowercase `user` and `agent` values are accepted for compatibility and normalized on output
 - task states use the A2A 1.0 `TASK_STATE_*` values; `ask_user` and approvals move a task to `TASK_STATE_INPUT_REQUIRED`, and the next `SendMessage` for that task resumes it
 - tasks are persisted under `~/.oni3/a2a/tasks/` and can be listed or polled after a restart
 
-Neither protocol depends on a third-party A2A or AG-UI SDK; the wire types and transports live in `protocol/agui` and `protocol/a2a`.
+AG-UI and A2A do not depend on third-party A2A or AG-UI SDKs; their wire types and transports live in `protocol/agui` and `protocol/a2a`.
+
+MCP Server:
+
+- Oni3 acts as the MCP server here; this is separate from the external `mcp_servers` Oni3 connects to as a client
+- `POST /mcp` is the Streamable HTTP endpoint; `GET /mcp` listens for server notifications and `DELETE /mcp` terminates a session
+- `GET /mcp/sse` and `POST /mcp/message?sessionId=...` provide the legacy SSE transport
+- the endpoint exposes the same three tools as `oni3 mcp`: `call_agent(agent, prompt, model?)`, `list_agents()` and `list_models()`
+- use the same `Authorization: Bearer <token>` header as the rest of the web service
 
 Oni3 can also call remote A2A agents as a non-streaming client. Register each remote agent under `a2a_agents`, then expose it to a model through an `a2a` tool:
 
@@ -357,6 +372,8 @@ Run Oni3 itself as a Model Context Protocol server. It exposes three tools:
 ```bash
 oni3 mcp
 ```
+
+While `oni3 web` is running, Oni3 also acts as an MCP server over `POST /mcp` (Streamable HTTP) or `GET /mcp/sse` (legacy SSE). Use `--mcp=false` to disable these server endpoints.
 
 - `call_agent(agent, prompt, model?)` runs any configured agent, including the built-in OniThree agent
 - `list_agents()` returns the agent names, descriptions and default model aliases

@@ -24,6 +24,29 @@ func TestPartWireFormats(t *testing.T) {
 	}
 }
 
+func TestNormalizeRole(t *testing.T) {
+	cases := map[string]string{
+		"user":       RoleUser,
+		"ROLE_USER":  RoleUser,
+		"role_user":  RoleUser,
+		"agent":      RoleAgent,
+		"assistant":  RoleAgent,
+		"ROLE_AGENT": RoleAgent,
+		"unexpected": "unexpected",
+	}
+	for input, want := range cases {
+		if got := NormalizeRole(input); got != want {
+			t.Fatalf("NormalizeRole(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if !IsUserRole("user") || IsUserRole("ROLE_AGENT") {
+		t.Fatal("IsUserRole disagrees")
+	}
+	if !IsAgentRole("agent") || IsAgentRole("ROLE_USER") {
+		t.Fatal("IsAgentRole disagrees")
+	}
+}
+
 func TestSendMessageRequestAcceptsBareMessage(t *testing.T) {
 	var wrapped SendMessageRequest
 	if err := json.Unmarshal([]byte(`{"message":{"role":"user","parts":[{"text":"hi"}]}}`), &wrapped); err != nil {

@@ -73,6 +73,17 @@ func TestDiscoverCardAtRootAndRelativeEndpoint(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
+		var params struct {
+			Message struct {
+				Role string `json:"role"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal(request.Params, &params); err != nil {
+			t.Fatalf("decode params: %v", err)
+		}
+		if params.Message.Role != RoleUser {
+			t.Errorf("send role = %q, want %q", params.Message.Role, RoleUser)
+		}
 		writeRPCResult(t, w, request.ID, map[string]any{"task": completedTask("task-1")})
 	})
 
@@ -139,6 +150,21 @@ func TestGetTaskArtifactAnswer(t *testing.T) {
 	}
 	if answer := remote.Answer(task); answer != "remote answer" {
 		t.Fatalf("answer = %q", answer)
+	}
+}
+
+func TestAnswerAcceptsV1AgentRole(t *testing.T) {
+	task := &Task{
+		ID:     "task-history",
+		Status: wireTaskStatus(StateCompleted, nil),
+		History: []Message{
+			{MessageID: "msg-user", Role: RoleUser, Parts: []Part{{Text: "hello"}}},
+			{MessageID: "msg-agent", Role: RoleAgent, Parts: []Part{{Text: "history answer"}}},
+		},
+	}
+	remote := &Client{}
+	if got := remote.Answer(task); got != "history answer" {
+		t.Fatalf("answer = %q", got)
 	}
 }
 

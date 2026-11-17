@@ -52,8 +52,10 @@ func (s *Store) Save(task *Task) error {
 	if err := validateTaskID(task.ID); err != nil {
 		return err
 	}
+	snapshot := cloneTask(task)
+	normalizeTaskRoles(snapshot)
 	s.mu.Lock()
-	s.tasks[task.ID] = cloneTask(task)
+	s.tasks[task.ID] = snapshot
 	s.mu.Unlock()
 
 	path := s.path(task.ID)
@@ -63,7 +65,7 @@ func (s *Store) Save(task *Task) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(task, "", "  ")
+	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -108,6 +110,7 @@ func (s *Store) Get(id string) (*Task, bool) {
 	if err := json.Unmarshal(data, &loaded); err != nil || loaded.ID == "" {
 		return nil, false
 	}
+	normalizeTaskRoles(&loaded)
 	s.mu.Lock()
 	s.tasks[loaded.ID] = cloneTask(&loaded)
 	s.mu.Unlock()
@@ -165,4 +168,16 @@ func cloneTask(task *Task) *Task {
 		return task
 	}
 	return &out
+}
+
+func normalizeTaskRoles(task *Task) {
+	if task == nil {
+		return
+	}
+	for i := range task.History {
+		task.History[i].Role = NormalizeRole(task.History[i].Role)
+	}
+	if task.Status.Message != nil {
+		task.Status.Message.Role = NormalizeRole(task.Status.Message.Role)
+	}
 }

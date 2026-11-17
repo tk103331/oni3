@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ONI3 API 文档</title>
+<script>
+  (function () {
+    try {
+      var stored = localStorage.getItem("oni3" + "-theme");
+      if (stored !== "light" && stored !== "dark") {
+        stored = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      }
+      document.documentElement.dataset.theme = stored;
+    } catch (_) {}
+  })();
+</script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0e1015;
+    --panel: #151823;
+    --panel-2: #1b2030;
+    --text: #e6e9f2;
+    --muted: #8d95a8;
+    --border: #262c3d;
+    --accent: #7c9cff;
+    --accent-soft: rgba(124, 156, 255, .14);
+    --code: #10131c;
+    --get: #5fd18a;
+    --post: #7c9cff;
+    --sse: #e5a95d;
+    --protocol: #c58cff;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6fa;
+    --panel: #ffffff;
+    --panel-2: #edf0f6;
+    --text: #1b2030;
+    --muted: #687089;
+    --border: #dce1ea;
+    --accent: #3f63d8;
+    --accent-soft: rgba(63, 99, 216, .1);
+    --code: #f0f2f7;
+    --get: #17834b;
+    --post: #3f63d8;
+    --sse: #a4610d;
+    --protocol: #7a3bb5;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 48px;
+    padding: 8px 16px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .brand { font-weight: 700; font-size: 17px; letter-spacing: .5px; text-transform: uppercase; }
+  .brand span {
+    margin-left: 6px;
+    padding: 0 6px;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    font-size: 10px;
+    letter-spacing: 1px;
+  }
+  .spacer { flex: 1; }
+  .back { color: var(--muted); font-size: 12px; }
+  .theme-fab {
+    position: fixed;
+    left: 12px;
+    bottom: 10px;
+    z-index: 10;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+  }
+  .theme-fab:hover { color: var(--text); border-color: var(--muted); }
+  .page {
+    display: grid;
+    grid-template-columns: 190px minmax(0, 1fr);
+    gap: 28px;
+    width: min(1120px, 100%);
+    margin: 0 auto;
+    padding: 24px 20px 64px;
+  }
+  nav {
+    position: sticky;
+    top: 72px;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12.5px;
+  }
+  nav a { color: var(--muted); padding: 4px 0; }
+  nav a:hover { color: var(--text); text-decoration: none; }
+  main { min-width: 0; }
+  h1 { margin: 0 0 6px; font-size: 26px; line-height: 1.25; }
+  h2 { margin: 28px 0 10px; font-size: 18px; }
+  h3 { margin: 20px 0 8px; font-size: 15px; }
+  p { margin: 0 0 10px; }
+  .lead { color: var(--muted); max-width: 760px; }
+  .note {
+    margin: 12px 0;
+    padding: 8px 11px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .endpoint {
+    margin: 8px 0;
+    padding: 9px 11px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .endpoint-line { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .method {
+    min-width: 38px;
+    font: 700 10.5px/1.6 ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: .4px;
+  }
+  .method.get { color: var(--get); }
+  .method.post { color: var(--post); }
+  .method.sse { color: var(--sse); }
+  .method.protocol { color: var(--protocol); }
+  .path { font: 12.5px/1.6 ui-monospace, Menlo, Consolas, monospace; word-break: break-all; }
+  .desc { margin-top: 3px; color: var(--muted); font-size: 12.5px; }
+  pre {
+    margin: 8px 0;
+    padding: 9px 11px;
+    overflow-x: auto;
+    background: var(--code);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  :not(pre) > code {
+    padding: 1px 4px;
+    background: var(--code);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: .92em;
+  }
+  ul { margin: 6px 0 10px; padding-left: 20px; }
+  li { margin: 2px 0; }
+  @media (max-width: 760px) {
+    .page { display: block; padding: 16px 12px 64px; }
+    nav { position: static; flex-flow: row wrap; gap: 6px 14px; margin-bottom: 16px; }
+    h1 { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">ONI3 <span>API</span></div>
+  <div class="spacer"></div>
+  <a class="back" href="/">返回控制台</a>
+</header>
+
+<div class="page">
+  <nav>
+    <a href="#auth">认证</a>
+    <a href="#web-api">Web API</a>
+    <a href="#chat-events">聊天事件</a>
+    <a href="#agui">AG-UI</a>
+    <a href="#a2a">A2A</a>
+    <a href="#mcp">MCP Server</a>
+  </nav>
+
+  <main>
+    <h1>ONI3 Web API</h1>
+    <p class="lead"><code>oni3 web</code> 同时提供浏览器界面、Web API、AG-UI、A2A 和 MCP Server。所有端点与界面共用同一套 Agent、模型、工具、审批和会话数据。</p>
+    <div class="note">用 <code>--web</code>、<code>--agui</code>、<code>--a2a</code>、<code>--mcp</code> 控制各端点，默认全部开启。例如 <code>oni3 serve --web=false --agui=false --a2a=false --mcp</code> 只启动 MCP Server；此时浏览器界面、Web API、登录页和本文档均不可用，但 <code>/api/health</code> 仍可访问。四个开关至少要保留一个。</div>
+
+    <h2 id="auth">认证</h2>
+    <p>未设置 <code>--token</code> 或 <code>ONI3_WEB_TOKEN</code> 时无需认证。启用后，除登录页和登录接口外，所有端点都需要认证：</p>
+    <pre>Authorization: Bearer $ONI3_WEB_TOKEN
+X-Oni3-Token: $ONI3_WEB_TOKEN
+?token=$ONI3_WEB_TOKEN</pre>
+    <p>浏览器登录成功后使用 HttpOnly Cookie；API 客户端建议使用 Bearer Token。跨域浏览器请求会被拒绝。</p>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/api/login</span></div>
+      <div class="desc">请求体 <code>{"token":"..."}</code>。成功返回 <code>204</code> 并设置 HttpOnly Cookie。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/api/logout</span></div>
+      <div class="desc">清除登录 Cookie，返回 <code>204</code>。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/auth</span></div>
+      <div class="desc">已认证时返回 <code>{"authenticated":true}</code>，供页面恢复登录状态。</div>
+    </div>
+
+    <h2 id="web-api">Web API</h2>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/bootstrap</span></div>
+      <div class="desc">返回默认 Agent、Agent 列表、模型别名、工作目录、版本和认证状态，供前端初始化。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/agents</span></div>
+      <div class="desc">返回 Agent 名称、描述和默认模型，格式为 <code>{"agents":[...]}</code>。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/models</span></div>
+      <div class="desc">返回模型别名列表和 <code>default_model</code>。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/sessions?limit=40&amp;q=keyword</span></div>
+      <div class="desc">列出最近会话。<code>q</code> 可选，搜索标题、Agent、模型、会话 ID 和消息内容；搜索时覆盖全部本地会话，结果仍受 <code>limit</code> 限制。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/sessions/{id}</span></div>
+      <div class="desc">返回单个会话摘要和完整事件历史，用于恢复对话。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/api/chat</span></div>
+      <div class="desc">发送一轮消息，返回 <code>text/event-stream</code>。请求体：</div>
+      <pre>{
+  "agent": "search_agent",
+  "prompt": "搜索今天的新闻",
+  "model": "optional_model_alias",
+  "session_id": "optional_existing_session"
+}</pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/api/respond</span></div>
+      <div class="desc">回答 <code>ask_user</code> 提问或工具审批。审批：<code>{"id":"...","approved":true,"remember":false}</code>；提问：<code>{"id":"...","value":"answer"}</code>。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/api/cancel</span></div>
+      <div class="desc">停止运行中的会话。请求体：<code>{"session_id":"..."}</code>。</div>
+    </div>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/api/health</span></div>
+      <div class="desc">健康检查，返回 <code>{"status":"ok"}</code>。</div>
+    </div>
+
+    <h2 id="chat-events">聊天事件</h2>
+    <p><code>/api/chat</code> 的 SSE 数据行是 JSON，主要事件类型：</p>
+    <ul>
+      <li><code>session</code>：会话 ID。</li>
+      <li><code>content</code>：增量回答文本。</li>
+      <li><code>reasoning</code>：增量推理文本。</li>
+      <li><code>tool</code>：工具调用开始或结束。</li>
+      <li><code>todos</code>：任务列表更新。</li>
+      <li><code>question</code>：Agent 等待用户回答，通过 <code>/api/respond</code> 继续。</li>
+      <li><code>approval</code>：工具调用等待审批，通过 <code>/api/respond</code> 继续。</li>
+      <li><code>error</code>：本轮错误。</li>
+      <li><code>done</code>：本轮结束，包含停止原因。</li>
+    </ul>
+
+    <h2 id="agui">AG-UI</h2>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method protocol">POST</span><span class="path">/agui</span></div>
+      <div class="desc">接收 AG-UI <code>RunAgentInput</code>，返回 <code>text/event-stream</code>。可用 <code>forwardedProps.agent</code> 与 <code>forwardedProps.model</code> 选择 Agent 和模型。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method protocol">POST</span><span class="path">/agents/{agent}/agui</span></div>
+      <div class="desc">指定 Agent 的 AG-UI 便捷端点。使用 <code>--agui=false</code> 可关闭。</div>
+    </div>
+
+    <h2 id="a2a">A2A</h2>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/.well-known/agent-card.json</span></div>
+      <div class="desc">默认 Agent 的 A2A Agent Card。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/agents/{agent}/.well-known/agent-card.json</span></div>
+      <div class="desc">指定 Agent 的 Agent Card。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method protocol">POST</span><span class="path">/a2a</span></div>
+      <div class="desc">A2A 1.0 JSON-RPC：<code>SendMessage</code>、<code>SendStreamingMessage</code>、<code>GetTask</code>、<code>ListTasks</code>、<code>CancelTask</code>、<code>SubscribeToTask</code>，同时兼容 0.3 斜杠方法名。消息角色使用 <code>ROLE_USER</code> / <code>ROLE_AGENT</code>，也接受 0.3 的 <code>user</code> / <code>agent</code>。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method protocol">POST</span><span class="path">/agents/{agent}/a2a</span></div>
+      <div class="desc">指定 Agent 的 A2A JSON-RPC 端点。使用 <code>--a2a=false</code> 可关闭。</div>
+    </div>
+
+    <h2 id="mcp">MCP Server</h2>
+    <p>这里把 Oni3 本身作为 MCP Server，通过 HTTP 向 MCP 客户端暴露工具，而不是管理 <code>config.yml</code> 中的外部 <code>mcp_servers</code>。Web 服务复用 <code>oni3 mcp</code> 的三个工具：</p>
+    <ul>
+      <li><code>call_agent(agent, prompt, model?)</code></li>
+      <li><code>list_agents()</code></li>
+      <li><code>list_models()</code></li>
+    </ul>
+
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/mcp</span></div>
+      <div class="desc">MCP Server 的 Streamable HTTP 主端点，接收 JSON-RPC。客户端配置示例：</div>
+      <pre>{
+  "mcpServers": {
+    "oni3": {
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": { "Authorization": "Bearer $ONI3_WEB_TOKEN" }
+    }
+  }
+}</pre>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method sse">GET</span><span class="path">/mcp</span></div>
+      <div class="desc">Streamable HTTP 的服务端通知流。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method get">GET</span><span class="path">/mcp/sse</span></div>
+      <div class="desc">兼容旧版 MCP SSE 传输，服务端通过 SSE 下发消息端点 <code>/mcp/message?sessionId=...</code>。</div>
+    </div>
+    <div class="endpoint">
+      <div class="endpoint-line"><span class="method post">POST</span><span class="path">/mcp/message?sessionId=...</span></div>
+      <div class="desc">旧版 SSE 传输的客户端消息入口。使用 <code>--mcp=false</code> 可关闭 MCP Server 端点。</div>
+    </div>
+
+    <div class="note">启动时会打印已启用的 Web、AG-UI、A2A 和 MCP 地址。所有协议都受与 Web 页面相同的 Token 认证保护。</div>
+  </main>
+</div>
+
+<button id="themeBtn" class="theme-fab" type="button" title="切换明暗主题" aria-label="切换明暗主题">☀</button>
+<script>
+"use strict";
+const themeKey = "oni3" + "-theme";
+function applyTheme(theme, persist) {
+  const next = theme === "light" ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  const button = document.getElementById("themeBtn");
+  button.textContent = next === "light" ? "☾" : "☀";
+  button.title = next === "light" ? "切换到暗色主题" : "切换到亮色主题";
+  button.setAttribute("aria-label", button.title);
+  if (!persist) return;
+  try { localStorage.setItem(themeKey, next); } catch (_) {}
+}
+document.getElementById("themeBtn").addEventListener("click", () => {
+  applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light", true);
+});
+applyTheme(document.documentElement.dataset.theme || "dark", false);
+</script>
+</body>
+</html>

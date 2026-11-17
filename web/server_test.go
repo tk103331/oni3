@@ -2,17 +2,21 @@ package web
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	mcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/tk103331/oni3/config"
 )
 
@@ -137,7 +141,12 @@ agents:
 
 func newTestServer(t *testing.T, cfg *config.Config) *httptest.Server {
 	t.Helper()
-	app, err := New(cfg, Options{DefaultAgent: "helper", WorkDir: "/tmp/oni3", Version: "test"})
+	app, err := New(cfg, Options{
+		DefaultAgent:    "helper",
+		WorkDir:         "/tmp/oni3",
+		Version:         "test",
+		EnableMCPServer: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,8 +293,28 @@ func TestBootstrapAndStaticPage(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	page, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(page), "Oni3 Web") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(page), "ONI3 Web") {
 		t.Fatalf("static page: status=%d len=%d", resp.StatusCode, len(page))
+	}
+	for _, marker := range []string{`id="sessionSearch"`, `id="themeBtn"`, `class="composer-selects"`, `href="/docs"`} {
+		if !strings.Contains(string(page), marker) {
+			t.Fatalf("static page is missing %s", marker)
+		}
+	}
+
+	docsResp, err := http.Get(server.URL + "/docs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer docsResp.Body.Close()
+	docs, _ := io.ReadAll(docsResp.Body)
+	if docsResp.StatusCode != http.StatusOK {
+		t.Fatalf("docs status = %d", docsResp.StatusCode)
+	}
+	for _, marker := range []string{"/api/chat", "/agui", "/a2a", "/mcp", "call_agent"} {
+		if !strings.Contains(string(docs), marker) {
+			t.Fatalf("docs page is missing %s", marker)
+		}
 	}
 
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/models", nil)
@@ -300,6 +329,175 @@ func TestBootstrapAndStaticPage(t *testing.T) {
 	defer foreign.Body.Close()
 	if foreign.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin status = %d", foreign.StatusCode)
+	}
+}
+
+func TestMCPHTTPEndpoint(t *testing.T) {
+	modelServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":      "chatcmpl-test",
+			"object":  "chat.completion",
+			"created": 0,
+			"model":   "mock-base",
+			"choices": []any{map[string]any{
+				"index":         0,
+				"message":       map[string]any{"role": "assistant", "content": "answer from mcp web"},
+				"finish_reason": "stop",
+			}},
+		})
+	}))
+	defer modelServer.Close()
+	cfg := testConfig(t, modelServer.URL, "")
+	server := newTestServer(t, cfg)
+
+	endpoint := server.URL + "/mcp"
+	mcpClient, err := mcpclient.NewStreamableHttpClient(endpoint)
+	if err != nil {
+		t.Fatalf("NewStreamableHttpClient: %v", err)
+	}
+	defer mcpClient.Close()
+	ctx := context.Background()
+	if err := mcpClient.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "web-test", Version: "1.0.0"}
+	if _, err := mcpClient.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+
+	list, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := make([]string, 0, len(list.Tools))
+	for _, item := range list.Tools {
+		names = append(names, item.Name)
+	}
+	if strings.Join(names, ",") != "call_agent,list_agents,list_models" {
+		t.Fatalf("tools = %v", names)
+	}
+
+	request := mcp.CallToolRequest{}
+	request.Params.Name = "call_agent"
+	request.Params.Arguments = map[string]any{"agent": "helper", "prompt": "hello"}
+	result, err := mcpClient.CallTool(ctx, request)
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("CallTool result = %+v", result)
+	}
+	if got := result.Content[0].(mcp.TextContent).Text; got != "answer from mcp web" {
+		t.Fatalf("answer = %q", got)
+	}
+}
+
+func TestMCPSSEEndpoint(t *testing.T) {
+	cfg := testConfig(t, "http://127.0.0.1:1", "")
+	server := newTestServer(t, cfg)
+
+	mcpClient, err := mcpclient.NewSSEMCPClient(server.URL + "/mcp/sse")
+	if err != nil {
+		t.Fatalf("NewSSEMCPClient: %v", err)
+	}
+	defer mcpClient.Close()
+	ctx := context.Background()
+	if err := mcpClient.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "web-sse-test", Version: "1.0.0"}
+	if _, err := mcpClient.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	list, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(list.Tools) != 3 {
+		t.Fatalf("tools = %+v", list.Tools)
+	}
+}
+
+func TestDisableWebKeepsProtocols(t *testing.T) {
+	cfg := &config.Config{
+		Models: map[string]config.Model{"base": {Provider: "openai", Model: "gpt-4"}},
+		Agents: map[string]config.Agent{"helper": {Model: "base"}},
+	}
+	app, err := New(cfg, Options{
+		DefaultAgent:    "helper",
+		WorkDir:         "/tmp/oni3",
+		Version:         "test",
+		DisableWeb:      true,
+		EnableMCPServer: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(app.Handler())
+	defer server.Close()
+
+	for _, path := range []string{"/", "/docs", "/login", "/api/models", "/api/bootstrap"} {
+		resp, err := http.Get(server.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("GET %s status = %d, want 404", path, resp.StatusCode)
+		}
+	}
+
+	resp, err := http.Get(server.URL + "/api/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d", resp.StatusCode)
+	}
+
+	mcpClient, err := mcpclient.NewStreamableHttpClient(server.URL + "/mcp")
+	if err != nil {
+		t.Fatalf("NewStreamableHttpClient: %v", err)
+	}
+	defer mcpClient.Close()
+	ctx := context.Background()
+	if err := mcpClient.Start(ctx); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	initRequest := mcp.InitializeRequest{}
+	initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+	initRequest.Params.ClientInfo = mcp.Implementation{Name: "no-web-test", Version: "1.0.0"}
+	if _, err := mcpClient.Initialize(ctx, initRequest); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	tools, err := mcpClient.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(tools.Tools) != 3 {
+		t.Fatalf("tools = %+v", tools.Tools)
+	}
+}
+
+func TestNewRequiresAtLeastOneEndpoint(t *testing.T) {
+	_, err := New(&config.Config{
+		Models: map[string]config.Model{"base": {Provider: "openai", Model: "gpt-4"}},
+		Agents: map[string]config.Agent{"helper": {Model: "base"}},
+	}, Options{DisableWeb: true})
+	if err == nil {
+		t.Fatal("expected an error when every endpoint is disabled")
 	}
 }
 
@@ -395,6 +593,48 @@ func TestChatStreamsPersistsAndReplaysHistory(t *testing.T) {
 	}
 	if event := findEvent(events2, "session"); event == nil || event["id"] != sessionID {
 		t.Fatalf("session id changed: %+v", event)
+	}
+}
+
+func TestSessionSearch(t *testing.T) {
+	llm := newMockLLM(t, func(w http.ResponseWriter, req mockRequest, call int) {
+		streamText(w, req.Model, "answer "+fmt.Sprint(call))
+	})
+	cfg := testConfig(t, llm.server.URL, "")
+	server := newTestServer(t, cfg)
+
+	for _, prompt := range []string{"alpha topic", "beta topic"} {
+		resp := postJSON(t, server.URL+"/api/chat", map[string]any{
+			"agent": "helper", "prompt": prompt,
+		})
+		events := readEvents(t, resp.Body, nil)
+		resp.Body.Close()
+		if done := lastDone(events); done == nil {
+			t.Fatalf("chat %q did not finish: %+v", prompt, events)
+		}
+	}
+
+	type sessionList struct {
+		Sessions []SessionSummary `json:"sessions"`
+	}
+	for _, tc := range []struct {
+		query string
+		want  int
+		title string
+	}{
+		{"BETA", 1, "beta topic"},
+		{"answer 0", 1, "alpha topic"},
+		{"helper", 2, ""},
+		{"missing", 0, ""},
+	} {
+		var sessions sessionList
+		getJSON(t, server.URL+"/api/sessions?q="+url.QueryEscape(tc.query), &sessions)
+		if len(sessions.Sessions) != tc.want {
+			t.Fatalf("query %q = %+v", tc.query, sessions.Sessions)
+		}
+		if tc.title != "" && sessions.Sessions[0].Title != tc.title {
+			t.Fatalf("query %q title = %q", tc.query, sessions.Sessions[0].Title)
+		}
 	}
 }
 

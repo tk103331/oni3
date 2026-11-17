@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -8,17 +10,28 @@ import (
 	"strings"
 	"testing"
 
+	mcpclient "github.com/mark3labs/mcp-go/client"
+	"github.com/mark3labs/mcp-go/client/transport"
+	mcp "github.com/mark3labs/mcp-go/mcp"
 	"github.com/tk103331/oni3/config"
 )
 
 func authTestServer(t *testing.T, token string) *httptest.Server {
 	t.Helper()
+	t.Setenv("HOME", t.TempDir())
 	cfg := &config.Config{
 		DefaultModel: "base",
 		Models:       map[string]config.Model{"base": {Provider: "openai", Model: "gpt-4"}},
 		Agents:       map[string]config.Agent{"helper": {Model: "base"}},
 	}
-	app, err := New(cfg, Options{DefaultAgent: "helper", WorkDir: "/tmp/oni3", Version: "test", Token: token})
+	app, err := New(cfg, Options{
+		DefaultAgent:    "helper",
+		WorkDir:         "/tmp/oni3",
+		Version:         "test",
+		Token:           token,
+		EnableMCPServer: true,
+		EnableA2A:       true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +85,14 @@ func TestTokenAuthentication(t *testing.T) {
 		}
 	})
 
+	t.Run("mcp requires auth", func(t *testing.T) {
+		resp := request(t, http.DefaultClient, http.MethodPost, server.URL+"/mcp", strings.NewReader(`{}`))
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+	})
+
 	t.Run("bearer token", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/models", nil)
 		req.Header.Set("Authorization", "Bearer top-secret")
@@ -83,6 +104,50 @@ func TestTokenAuthentication(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			t.Fatalf("status = %d (%s)", resp.StatusCode, body)
+		}
+	})
+
+	t.Run("a2a bearer token", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPost, server.URL+"/a2a",
+			strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{}}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer top-secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status = %d (%s)", resp.StatusCode, body)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload["result"] == nil || payload["error"] != nil {
+			t.Fatalf("response = %+v", payload)
+		}
+	})
+
+	t.Run("mcp bearer token", func(t *testing.T) {
+		mcpClient, err := mcpclient.NewStreamableHttpClient(
+			server.URL+"/mcp",
+			transport.WithHTTPHeaders(map[string]string{"Authorization": "Bearer top-secret"}),
+		)
+		if err != nil {
+			t.Fatalf("NewStreamableHttpClient: %v", err)
+		}
+		defer mcpClient.Close()
+		ctx := context.Background()
+		if err := mcpClient.Start(ctx); err != nil {
+			t.Fatalf("Start: %v", err)
+		}
+		initRequest := mcp.InitializeRequest{}
+		initRequest.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
+		initRequest.Params.ClientInfo = mcp.Implementation{Name: "auth-test", Version: "1.0.0"}
+		if _, err := mcpClient.Initialize(ctx, initRequest); err != nil {
+			t.Fatalf("Initialize: %v", err)
 		}
 	})
 

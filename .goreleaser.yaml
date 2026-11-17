@@ -22,17 +22,21 @@ builds:
       - arm64
     flags:
       - -trimpath
+      - -buildvcs=false
+      # Release binaries favor size: Oni3 spends most of its time waiting on
+      # models and tools, so disabling inlining is an acceptable trade-off.
+      - -gcflags=all=-l
     ldflags:
       - -s -w -X github.com/tk103331/oni3/version.Version={{ .Version }}
 
-# Ship compressed archives: a stripped binary is ~50 MB, while gzip brings the
-# download down to ~15 MB. The npm installer and the Homebrew formula unpack
-# `oni3` from oni3_<version>_<os>_<arch>.tar.gz. Windows gets a zip, which is
+# Ship compressed archives: a stripped binary is ~50 MB, while xz brings the
+# download down to ~12-17 MB. The npm installer and the Homebrew formula unpack
+# `oni3` from oni3_<version>_<os>_<arch>.tar.xz. Windows gets a zip, which is
 # what its tooling expects.
 archives:
   - id: oni3
     ids: [oni3]
-    formats: [tar.gz]
+    formats: [tar.xz]
     name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows

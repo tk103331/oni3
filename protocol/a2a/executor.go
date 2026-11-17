@@ -237,12 +237,12 @@ func (s *Server) execute(tr *taskRun, prompt string) {
 		if errText == "" {
 			errText = err.Error()
 		}
-		tr.setStateFinal(StateFailed, messagePtr(textMessage("agent", errText, tr.taskID, tr.contextID)), true)
+		tr.setStateFinal(StateFailed, messagePtr(textMessage(RoleAgent, errText, tr.taskID, tr.contextID)), true)
 	case result.Stop == "error":
 		if errText == "" {
 			errText = "agent run failed"
 		}
-		tr.setStateFinal(StateFailed, messagePtr(textMessage("agent", errText, tr.taskID, tr.contextID)), true)
+		tr.setStateFinal(StateFailed, messagePtr(textMessage(RoleAgent, errText, tr.taskID, tr.contextID)), true)
 	default:
 		tr.addArtifact(answer)
 		tr.setStateFinal(StateCompleted, nil, true)
@@ -355,7 +355,7 @@ func (i *taskInteractor) wait(ctx context.Context, kind string, data runtime.Int
 			text = "Approve tool " + data.Request.Tool
 		}
 	}
-	message := textMessage("agent", text, tr.taskID, tr.contextID)
+	message := textMessage(RoleAgent, text, tr.taskID, tr.contextID)
 	if tr.task.Metadata != nil {
 		message.Metadata = map[string]any{"kind": kind}
 		if kind == "approval" {

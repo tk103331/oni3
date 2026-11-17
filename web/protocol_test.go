@@ -210,7 +210,7 @@ func TestA2ACardAndSendMessage(t *testing.T) {
 	result := a2aRPC(t, server.URL+"/a2a", "SendMessage", map[string]any{
 		"message": map[string]any{
 			"messageId": "m-a2a-1",
-			"role":      "user",
+			"role":      "ROLE_USER",
 			"parts":     []any{map[string]any{"kind": "text", "text": "hello"}},
 		},
 	})
@@ -220,6 +220,11 @@ func TestA2ACardAndSendMessage(t *testing.T) {
 	}
 	taskID := fmt.Sprint(task["id"])
 	completed := waitTaskState(t, server.URL+"/a2a", taskID, "TASK_STATE_COMPLETED")
+
+	history, _ := completed["history"].([]any)
+	if len(history) == 0 || history[0].(map[string]any)["role"] != "ROLE_USER" {
+		t.Fatalf("history role = %v", completed["history"])
+	}
 
 	artifacts, _ := completed["artifacts"].([]any)
 	if len(artifacts) != 1 {

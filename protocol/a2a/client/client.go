@@ -43,6 +43,11 @@ const (
 	StateAuthRequired  = wire.StateAuthRequired
 )
 
+const (
+	RoleUser  = wire.RoleUser
+	RoleAgent = wire.RoleAgent
+)
+
 type (
 	AgentCard          = wire.AgentCard
 	Task               = wire.Task
@@ -170,7 +175,7 @@ func (c *Client) SendMessage(ctx context.Context, text, contextID, taskID string
 	message := Message{
 		Kind:      "message",
 		MessageID: "msg-" + randomID(),
-		Role:      "user",
+		Role:      RoleUser,
 		TaskID:    strings.TrimSpace(taskID),
 		ContextID: strings.TrimSpace(contextID),
 		Parts:     []Part{wire.TextPart(text)},
@@ -272,8 +277,7 @@ func (c *Client) Answer(task *Task) string {
 		return out.String()
 	}
 	for i := len(task.History) - 1; i >= 0; i-- {
-		role := strings.ToLower(task.History[i].Role)
-		if role != "agent" && role != "assistant" {
+		if !wire.IsAgentRole(task.History[i].Role) {
 			continue
 		}
 		if text := strings.TrimSpace(task.History[i].Text()); text != "" {
@@ -382,6 +386,12 @@ func decodeTask(raw json.RawMessage) (*Task, bool) {
 	if strings.TrimSpace(task.ID) == "" || strings.TrimSpace(task.Status.State) == "" {
 		return nil, false
 	}
+	for i := range task.History {
+		task.History[i].Role = wire.NormalizeRole(task.History[i].Role)
+	}
+	if task.Status.Message != nil {
+		task.Status.Message.Role = wire.NormalizeRole(task.Status.Message.Role)
+	}
 	return &task, true
 }
 
@@ -393,6 +403,7 @@ func decodeMessage(raw json.RawMessage) (*Message, bool) {
 	if strings.TrimSpace(message.MessageID) == "" || strings.TrimSpace(message.Role) == "" {
 		return nil, false
 	}
+	message.Role = wire.NormalizeRole(message.Role)
 	return &message, true
 }
 

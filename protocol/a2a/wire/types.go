@@ -10,6 +10,12 @@ import (
 
 const ProtocolVersion = "1.0"
 
+// Message roles defined by A2A 1.0.
+const (
+	RoleUser  = "ROLE_USER"
+	RoleAgent = "ROLE_AGENT"
+)
+
 // Task states defined by A2A 1.0.
 const (
 	StateSubmitted     = "TASK_STATE_SUBMITTED"
@@ -133,6 +139,31 @@ type FilePart struct {
 	MimeType string `json:"mimeType,omitempty"`
 	Bytes    string `json:"bytes,omitempty"`
 	URI      string `json:"uri,omitempty"`
+}
+
+// NormalizeRole maps A2A 0.3 lowercase roles and 1.0 enum values to the 1.0
+// wire form.
+func NormalizeRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "role_user", "user":
+		return RoleUser
+	case "role_agent", "agent", "assistant":
+		return RoleAgent
+	default:
+		return strings.TrimSpace(role)
+	}
+}
+
+// IsUserRole reports whether role is the A2A 1.0 user role. The 0.3 form is
+// accepted as well.
+func IsUserRole(role string) bool {
+	return NormalizeRole(role) == RoleUser
+}
+
+// IsAgentRole reports whether role is the A2A 1.0 agent role. The 0.3 form is
+// accepted as well.
+func IsAgentRole(role string) bool {
+	return NormalizeRole(role) == RoleAgent
 }
 
 // TextPart builds a text part.

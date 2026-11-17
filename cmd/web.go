@@ -37,7 +37,10 @@ interface.
 
 The server listens on 127.0.0.1 by default. Binding it to a non-loopback
 address is safer with --token, which requires an access token before the
-interface or API can be used.`,
+interface or API can be used.
+
+Use --web, --agui, --a2a and --mcp to choose which interfaces and protocol
+endpoints are exposed. At least one of them must be enabled.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := config.GetConfig()
@@ -80,6 +83,14 @@ interface or API can be used.`,
 			return fmt.Errorf("failed to read working directory: %w", err)
 		}
 
+		webEnabled := boolFlag(cmd, "web", true)
+		aguiEnabled := boolFlag(cmd, "agui", true)
+		a2aEnabled := boolFlag(cmd, "a2a", true)
+		mcpEnabled := boolFlag(cmd, "mcp", true)
+		if !webEnabled && !aguiEnabled && !a2aEnabled && !mcpEnabled {
+			return fmt.Errorf("at least one of --web, --agui, --a2a, --mcp must be enabled")
+		}
+
 		// Agent runs may use tools from external MCP servers. Initialize the
 		// manager synchronously so the first browser turn already sees them.
 		baseCtx := cmd.Context()
@@ -93,12 +104,14 @@ interface or API can be used.`,
 		}
 
 		app, err := web.New(cfg, web.Options{
-			DefaultAgent: agentName,
-			WorkDir:      workDir,
-			Version:      version.Version,
-			Token:        token,
-			EnableAGUI:   boolFlag(cmd, "agui", true),
-			EnableA2A:    boolFlag(cmd, "a2a", true),
+			DefaultAgent:    agentName,
+			WorkDir:         workDir,
+			Version:         version.Version,
+			Token:           token,
+			DisableWeb:      !webEnabled,
+			EnableAGUI:      aguiEnabled,
+			EnableA2A:       a2aEnabled,
+			EnableMCPServer: mcpEnabled,
 		})
 		if err != nil {
 			return err
@@ -111,34 +124,46 @@ interface or API can be used.`,
 		defer listener.Close()
 
 		baseURL := webURL(listener.Addr().String())
-		browserURL := baseURL
-		if token != "" {
-			browserURL += "?token=" + url.QueryEscape(token)
+		if webEnabled {
+			fmt.Printf("Oni3 web is running at %s\n", baseURL)
+		} else {
+			fmt.Printf("Oni3 server is running at %s\n", baseURL)
 		}
-		fmt.Printf("Oni3 web is running at %s\n", baseURL)
 		fmt.Printf("Default agent: %s\n", agentName)
 		if token != "" {
 			fmt.Println("Token authentication: enabled")
 		}
-		if boolFlag(cmd, "agui", true) {
+		if aguiEnabled {
 			fmt.Printf("AG-UI endpoint: %s/agui\n", baseURL)
 		}
-		if boolFlag(cmd, "a2a", true) {
+		if a2aEnabled {
 			fmt.Printf("A2A endpoint: %s/a2a\n", baseURL)
 			fmt.Printf("Agent card: %s/.well-known/agent-card.json\n", baseURL)
+		}
+		if mcpEnabled {
+			fmt.Printf("MCP server endpoint: %s/mcp\n", baseURL)
+			fmt.Printf("MCP server SSE endpoint: %s/mcp/sse\n", baseURL)
 		}
 		fmt.Println("Press Ctrl+C to stop")
 		if !isLoopbackAddr(listener.Addr().String()) {
 			if token == "" {
-				fmt.Fprintln(os.Stderr, "Warning: the web interface is reachable from the network and has no authentication; anyone who can reach it may run configured tools. Use --token to require a token.")
+				fmt.Fprintln(os.Stderr, "Warning: the server is reachable from the network and has no authentication; anyone who can reach it may run configured tools. Use --token to require a token.")
 			} else {
 				fmt.Fprintln(os.Stderr, "Note: token authentication is enabled; keep the token secret.")
 			}
 		}
 
 		if open, _ := cmd.Flags().GetBool("open"); open {
-			if err := openBrowser(browserURL); err != nil {
-				fmt.Fprintf(os.Stderr, "Warning: failed to open the browser: %v\n", err)
+			if !webEnabled {
+				fmt.Fprintln(os.Stderr, "Note: --open ignored because the web interface is disabled.")
+			} else {
+				browserURL := baseURL
+				if token != "" {
+					browserURL += "?token=" + url.QueryEscape(token)
+				}
+				if err := openBrowser(browserURL); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to open the browser: %v\n", err)
+				}
 			}
 		}
 
@@ -156,7 +181,7 @@ interface or API can be used.`,
 			_ = httpServer.Shutdown(shutdownCtx)
 		}()
 
-		logger.Info("WEB", fmt.Sprintf("Serving web interface on %s", listener.Addr().String()))
+		logger.Info("WEB", fmt.Sprintf("Serving HTTP endpoints on %s", listener.Addr().String()))
 		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return fmt.Errorf("web server stopped: %w", err)
 		}
@@ -166,7 +191,7 @@ interface or API can be used.`,
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Serve agents over HTTP, AG-UI and A2A",
+	Short: "Serve agents over HTTP, AG-UI, A2A and MCP",
 	Long:  webCmd.Long,
 	Args:  cobra.NoArgs,
 	RunE:  webCmd.RunE,
@@ -228,7 +253,9 @@ func init() {
 		command.Flags().StringP("agent", "a", "", "Default agent (default: last used or the built-in OniThree agent)")
 		command.Flags().String("token", "", "Require this access token (default: $ONI3_WEB_TOKEN)")
 		command.Flags().Bool("open", false, "Open the interface in the default browser")
+		command.Flags().Bool("web", true, "Enable the browser interface and web API")
 		command.Flags().Bool("agui", true, "Expose the AG-UI endpoint")
 		command.Flags().Bool("a2a", true, "Expose the A2A JSON-RPC and agent-card endpoints")
+		command.Flags().Bool("mcp", true, "Run Oni3 as an MCP server over Streamable HTTP and SSE")
 	}
 }

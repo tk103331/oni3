@@ -10,9 +10,28 @@ func TestWebCommandRegistered(t *testing.T) {
 	if command == nil || command.Name() != "web" {
 		t.Fatalf("web command not registered: %+v", command)
 	}
-	for _, name := range []string{"addr", "agent", "open", "token"} {
+	for _, name := range []string{"addr", "agent", "open", "token", "web", "agui", "a2a", "mcp"} {
 		if command.Flags().Lookup(name) == nil {
 			t.Fatalf("web command is missing --%s", name)
+		}
+	}
+}
+
+func TestServeCommandEndpointFlags(t *testing.T) {
+	command, _, err := RootCmd.Find([]string{"serve"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command == nil || command.Name() != "serve" {
+		t.Fatalf("serve command not registered: %+v", command)
+	}
+	for _, name := range []string{"web", "agui", "a2a", "mcp"} {
+		flag := command.Flags().Lookup(name)
+		if flag == nil {
+			t.Fatalf("serve command is missing --%s", name)
+		}
+		if flag.DefValue != "true" {
+			t.Fatalf("--%s default = %q, want true", name, flag.DefValue)
 		}
 	}
 }

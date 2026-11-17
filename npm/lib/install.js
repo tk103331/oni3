@@ -28,13 +28,13 @@ function vendorDir() {
 }
 
 // assetName mirrors the goreleaser archive naming:
-// oni3_<version>_<os>_<arch>.tar.gz, and .zip on Windows.
+// oni3_<version>_<os>_<arch>.tar.xz, and .zip on Windows.
 function assetName(v) {
   const target = platformTarget();
   if (!target) {
     return null;
   }
-  const ext = target.os === 'windows' ? 'zip' : 'tar.gz';
+  const ext = target.os === 'windows' ? 'zip' : 'tar.xz';
   return `${BINARY}_${v}_${target.os}_${target.arch}.${ext}`;
 }
 
@@ -85,8 +85,8 @@ function extract(archive, dir) {
     }
   }
   try {
-    // Only unpack the binary; the archive also carries the docs.
-    execFileSync('tar', ['-xzf', archive, '-C', dir], { stdio: 'ignore' });
+    // Let tar detect the compression so future archive formats keep working.
+    execFileSync('tar', ['-xf', archive, '-C', dir], { stdio: 'ignore' });
   } catch (err) {
     throw new Error(`failed to extract ${archive} (tar unavailable): ${err.message}`);
   }

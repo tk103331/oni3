@@ -22,7 +22,9 @@ import (
 	"sync"
 	"time"
 
+	mcpgo "github.com/mark3labs/mcp-go/server"
 	"github.com/tk103331/oni3/config"
+	mcpserver "github.com/tk103331/oni3/mcp/server"
 	a2aprotocol "github.com/tk103331/oni3/protocol/a2a"
 	aguiprotocol "github.com/tk103331/oni3/protocol/agui"
 	"github.com/tk103331/oni3/runtime"
@@ -44,10 +46,16 @@ type Options struct {
 	Version string
 	// Token enables bearer-token authentication when non-empty.
 	Token string
+	// DisableWeb hides the browser interface, web API and login/docs pages.
+	// Protocol endpoints and /api/health remain available.
+	DisableWeb bool
 	// EnableAGUI mounts the AG-UI SSE endpoint.
 	EnableAGUI bool
 	// EnableA2A mounts the A2A JSON-RPC and agent-card endpoints.
 	EnableA2A bool
+	// EnableMCPServer makes Oni3 itself an MCP server over Streamable HTTP and
+	// legacy SSE. It does not manage external MCP servers.
+	EnableMCPServer bool
 }
 
 // Server exposes configured agents over HTTP.
@@ -58,6 +66,7 @@ type Server struct {
 	version      string
 	tokenHash    string
 	authCookie   string
+	webEnabled   bool
 	mux          *http.ServeMux
 
 	pendingMu sync.Mutex
@@ -69,8 +78,10 @@ type Server struct {
 	approvedMu sync.Mutex
 	approved   map[string]map[string]bool
 
-	agui *aguiprotocol.Server
-	a2a  *a2aprotocol.Server
+	agui    *aguiprotocol.Server
+	a2a     *a2aprotocol.Server
+	mcpHTTP *mcpgo.StreamableHTTPServer
+	mcpSSE  *mcpgo.SSEServer
 }
 
 // New creates a web server for cfg.
@@ -104,6 +115,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		version:      opts.Version,
 		tokenHash:    "",
 		authCookie:   "",
+		webEnabled:   !opts.DisableWeb,
 		mux:          http.NewServeMux(),
 		pending:      make(map[string]chan hostResponse),
 		runs:         make(map[string]context.CancelFunc),
@@ -112,6 +124,9 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if token := strings.TrimSpace(opts.Token); token != "" {
 		s.tokenHash = hashToken(token)
 		s.authCookie = tokenCookieValue(token)
+	}
+	if opts.DisableWeb && !opts.EnableAGUI && !opts.EnableA2A && !opts.EnableMCPServer {
+		return nil, fmt.Errorf("no web interface or protocol endpoints enabled")
 	}
 
 	if opts.EnableAGUI || opts.EnableA2A {
@@ -134,6 +149,32 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 			s.a2a = handler
 		}
 	}
+	if opts.EnableMCPServer {
+		exposed, err := mcpserver.AgentTools(cfg)
+		if err != nil {
+			return nil, err
+		}
+		mcpSrv, err := mcpserver.New(mcpserver.Options{
+			Name:    "oni3",
+			Version: opts.Version,
+			Instructions: fmt.Sprintf(
+				"Use list_agents to discover agents, call_agent to run one, and "+
+					"list_models to discover model aliases. Relative paths resolve against %s.", workDir),
+			Tools: exposed,
+		})
+		if err != nil {
+			return nil, err
+		}
+		s.mcpHTTP = mcpgo.NewStreamableHTTPServer(mcpSrv, mcpgo.WithEndpointPath("/mcp"))
+		s.mcpSSE = mcpgo.NewSSEServer(
+			mcpSrv,
+			mcpgo.WithStaticBasePath("/mcp"),
+			mcpgo.WithSSEEndpoint("/sse"),
+			mcpgo.WithMessageEndpoint("/message"),
+			mcpgo.WithAppendQueryToMessageEndpoint(),
+			mcpgo.WithUseFullURLForMessageEndpoint(false),
+		)
+	}
 	s.routes()
 	return s, nil
 }
@@ -151,34 +192,36 @@ func (s *Server) Handler() http.Handler {
 			}
 		}
 		if s.tokenHash != "" {
-			// The login endpoint itself must stay reachable without a token.
-			if r.Method == http.MethodPost && r.URL.Path == "/api/login" {
-				s.mux.ServeHTTP(w, r)
-				return
-			}
-			// Exchange a token supplied in the URL for an HttpOnly cookie and
-			// remove it from the address bar on the redirect.
-			if queryToken := strings.TrimSpace(r.URL.Query().Get(authQueryParam)); queryToken != "" {
-				if !s.validToken(queryToken) {
-					writeError(w, http.StatusUnauthorized, "invalid token")
+			if s.webEnabled {
+				// The login endpoint itself must stay reachable without a token.
+				if r.Method == http.MethodPost && r.URL.Path == "/api/login" {
+					s.mux.ServeHTTP(w, r)
 					return
 				}
-				if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/login") {
-					s.setAuthCookie(w, r)
-					if r.URL.Path == "/login" {
-						http.Redirect(w, r, "/", http.StatusFound)
+				// Exchange a token supplied in the URL for an HttpOnly cookie and
+				// remove it from the address bar on the redirect.
+				if queryToken := strings.TrimSpace(r.URL.Query().Get(authQueryParam)); queryToken != "" {
+					if !s.validToken(queryToken) {
+						writeError(w, http.StatusUnauthorized, "invalid token")
 						return
 					}
-					target := *r.URL
-					query := target.Query()
-					query.Del(authQueryParam)
-					target.RawQuery = query.Encode()
-					http.Redirect(w, r, target.String(), http.StatusFound)
-					return
+					if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/login") {
+						s.setAuthCookie(w, r)
+						if r.URL.Path == "/login" {
+							http.Redirect(w, r, "/", http.StatusFound)
+							return
+						}
+						target := *r.URL
+						query := target.Query()
+						query.Del(authQueryParam)
+						target.RawQuery = query.Encode()
+						http.Redirect(w, r, target.String(), http.StatusFound)
+						return
+					}
 				}
 			}
 			if !s.authorized(r) {
-				if r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/login") {
+				if s.webEnabled && r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/login") {
 					s.serveLogin(w)
 					return
 				}
@@ -192,21 +235,25 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /api/bootstrap", s.handleBootstrap)
-	s.mux.HandleFunc("GET /api/agents", s.handleAgents)
-	s.mux.HandleFunc("GET /api/models", s.handleModels)
-	s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
-	s.mux.HandleFunc("GET /api/sessions/{id}", s.handleSession)
-	s.mux.HandleFunc("POST /api/chat", s.handleChat)
-	s.mux.HandleFunc("POST /api/respond", s.handleRespond)
-	s.mux.HandleFunc("POST /api/cancel", s.handleCancel)
 	s.mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	s.mux.HandleFunc("GET /login", s.handleLoginPage)
-	s.mux.HandleFunc("GET /api/auth", s.handleAuth)
-	s.mux.HandleFunc("POST /api/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/logout", s.handleLogout)
+	if s.webEnabled {
+		s.mux.HandleFunc("GET /api/bootstrap", s.handleBootstrap)
+		s.mux.HandleFunc("GET /api/agents", s.handleAgents)
+		s.mux.HandleFunc("GET /api/models", s.handleModels)
+		s.mux.HandleFunc("GET /api/sessions", s.handleSessions)
+		s.mux.HandleFunc("GET /api/sessions/{id}", s.handleSession)
+		s.mux.HandleFunc("POST /api/chat", s.handleChat)
+		s.mux.HandleFunc("POST /api/respond", s.handleRespond)
+		s.mux.HandleFunc("POST /api/cancel", s.handleCancel)
+		s.mux.HandleFunc("GET /login", s.handleLoginPage)
+		s.mux.HandleFunc("GET /docs", s.handleDocs)
+		s.mux.HandleFunc("GET /api/auth", s.handleAuth)
+		s.mux.HandleFunc("POST /api/login", s.handleLogin)
+		s.mux.HandleFunc("POST /api/logout", s.handleLogout)
+		s.mux.HandleFunc("GET /", s.handleIndex)
+	}
 	if s.agui != nil {
 		s.mux.Handle("POST /agui", s.agui.Handler(""))
 		s.mux.HandleFunc("POST /agents/{agent}/agui", func(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +270,15 @@ func (s *Server) routes() {
 			s.a2a.CardHandler(r.PathValue("agent")).ServeHTTP(w, r)
 		})
 	}
-	s.mux.HandleFunc("GET /", s.handleIndex)
+	if s.mcpHTTP != nil {
+		s.mux.Handle("POST /mcp", s.mcpHTTP)
+		s.mux.Handle("GET /mcp", s.mcpHTTP)
+		s.mux.Handle("DELETE /mcp", s.mcpHTTP)
+	}
+	if s.mcpSSE != nil {
+		s.mux.Handle("GET /mcp/sse", s.mcpSSE.SSEHandler())
+		s.mux.Handle("POST /mcp/message", s.mcpSSE.MessageHandler())
+	}
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +289,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	data, err := staticFiles.ReadFile("static/index.html")
 	if err != nil {
 		http.Error(w, "web interface unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	_, _ = w.Write(data)
+}
+
+func (s *Server) handleDocs(w http.ResponseWriter, r *http.Request) {
+	data, err := staticFiles.ReadFile("static/docs.html")
+	if err != nil {
+		http.Error(w, "API documentation unavailable", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -344,17 +411,45 @@ func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
 			limit = parsed
 		}
 	}
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	listLimit := limit
+	if query != "" {
+		// Search all stored sessions, then cap the matches below.
+		listLimit = 0
+	}
 
-	stored, err := session.List(session.KindAgent, limit)
+	stored, err := session.List(session.KindAgent, listLimit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	summaries := make([]SessionSummary, 0, len(stored))
 	for _, sess := range stored {
-		summaries = append(summaries, summarizeSession(sess))
+		summary := summarizeSession(sess)
+		if query != "" && !sessionMatchesQuery(sess, summary, query) {
+			continue
+		}
+		summaries = append(summaries, summary)
+		if len(summaries) >= limit {
+			break
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": summaries})
+}
+
+func sessionMatchesQuery(sess *session.Session, summary SessionSummary, query string) bool {
+	if strings.Contains(strings.ToLower(summary.Title), query) ||
+		strings.Contains(strings.ToLower(summary.Agent), query) ||
+		strings.Contains(strings.ToLower(summary.Model), query) ||
+		strings.Contains(strings.ToLower(summary.ID), query) {
+		return true
+	}
+	for _, event := range sess.Events() {
+		if strings.Contains(strings.ToLower(event.Content), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
