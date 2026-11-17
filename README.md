@@ -161,35 +161,53 @@ settings:
 
 `run` and `acp` have no UI to ask, so tools run without the prompt there.
 
-`skills` are switchable capability presets in `config.yml` (extra system prompt, optional extra tools):
+Skills follow the [Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills) layout: a skill is a directory with a `SKILL.md` document and optional bundled resources (references, scripts, assets).
+
+```
+.oni3/skills/                     # project skills (highest priority)
+  code-review/
+    SKILL.md
+    references/checklist.md
+~/.oni3/skills/                   # personal skills
+  release/SKILL.md
+~/.agents/skills/                 # skills shared with other agent tools
+  translator.md                   # legacy flat document, still supported
+```
+
+On name clashes the first directory wins; file skills override `config.yml` entries. A `SKILL.md` directory wins over a flat `*.md` file with the same name.
+
+`SKILL.md` starts with optional YAML front matter (`allowed-tools` accepts a space/comma separated string or a list):
+
+```markdown
+---
+name: code-review                  # optional, defaults to the directory name
+description: Review code changes for correctness and clarity
+license: MIT
+allowed-tools: Read Grep
+metadata:
+  owner: platform
+tools: [file_system]               # oni3 extension: extra tools for /skill
+---
+Start with correctness issues, then clarity. Read `references/checklist.md`
+and follow it before reviewing any change.
+```
+
+Skills use progressive disclosure:
+
+- the system prompt lists each skill's name, description and `SKILL.md` path, so the model only pays for the summary;
+- the model reads `SKILL.md` (and any bundled files) with its file tools when the skill is relevant;
+- `/skill <name>` (or `/skill:<name> <message>`) is the explicit shortcut: it inlines the instructions and mounts the skill's extra tools for the session.
+
+Skills can also be declared inline in `config.yml` (selection-only presets, best used with `/skill`):
 
 ```yaml
 skills:
   translator:
     description: "Translation assistant (EN <-> ZH)"
     system: "You are a professional translator. Output only the translation."
-  coder:
-    description: "Coding assistant"
-    system: "Prefer runnable code examples."
-    tools: [shell]   # optional: extra tools
 ```
 
-Skills can also live in **directories** (no config.yml needed), scanned in priority order:
-
-- `~/.oni3/skills/*.md` (highest priority)
-- `~/.agents/skills/*.md`
-
-On name clashes the first directory wins; directory skills override config.yml entries.
-
-Each file is a markdown document with optional front matter:
-
-```markdown
----
-description: Code review
-tools: [shell]
----
-You are a strict code reviewer. Start with correctness issues...
-```
+Names use lower-case letters, digits and hyphens (max 64 characters); other names still load for backward compatibility but are reported in the log.
 
 Start an interactive session with an agent:
 

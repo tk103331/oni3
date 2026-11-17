@@ -54,6 +54,10 @@ type Agent struct {
 	// MaxSteps caps the ReAct loop (model + tool rounds). It defaults to
 	// DefaultMaxSteps when unset.
 	MaxSteps int `yaml:"max_steps,omitempty"`
+	// ActiveSkill names the skill whose instructions were folded into System
+	// at build time. It is runtime state, never read from the file, and keeps
+	// that skill out of the model's skill catalog (its body is already there).
+	ActiveSkill string `yaml:"-"`
 }
 
 // AgentDisplayName returns the label of the agent with the given
@@ -72,13 +76,40 @@ func (c *Config) AgentDisplayName(key string) string {
 	return key
 }
 
-// Skill represents an optional capability preset that can be switched on at
-// runtime (via the /skill command in the TUI). A skill extends the active
-// agent's system prompt and can add extra tools.
+// Skill represents one capability preset. Oni3 understands the Agent Skills
+// layout (a directory holding SKILL.md next to optional resources) as well as
+// flat markdown files and config.yml entries.
+//
+// A skill is discovered by name and description; its instructions (the body
+// of SKILL.md) are loaded on demand: the model reads the file listed in its
+// system prompt, or the user activates the skill with /skill.
 type Skill struct {
-	Description string   `yaml:"description,omitempty"`
-	System      string   `yaml:"system,omitempty"`
-	Tools       []string `yaml:"tools,omitempty"`
+	// Name is the skill identifier. For SKILL.md files it comes from the
+	// front matter and falls back to the directory name; config.yml entries
+	// fall back to their map key.
+	Name string `yaml:"name,omitempty"`
+	// Description is the one-line summary shown in the catalog and in the
+	// /skill list. It falls back to the first line of the instructions.
+	Description string `yaml:"description,omitempty"`
+	// System is the instruction body (everything after the front matter).
+	// /skill merges it in front of the agent's system prompt.
+	System string `yaml:"system,omitempty"`
+	// Tools are extra oni3 tools enabled together with the skill. Unlike
+	// Anthropic's allowed-tools these really mount tools, so they must exist
+	// under config.yml tools.
+	Tools []string `yaml:"tools,omitempty"`
+	// AllowedTools is the front matter allowed-tools declaration. It is
+	// informational: an agent's tool set is fixed at build time.
+	AllowedTools []string `yaml:"allowed_tools,omitempty"`
+	// License and Metadata are free-form fields carried by the front matter.
+	License  string         `yaml:"license,omitempty"`
+	Metadata map[string]any `yaml:"metadata,omitempty"`
+	// Dir is the skill directory for the SKILL.md layout (empty for legacy
+	// flat files). Bundled resources live next to the document.
+	Dir string `yaml:"-"`
+	// Path is the absolute path of the markdown document that defined the
+	// skill, when it came from a file.
+	Path string `yaml:"-"`
 }
 
 // Provider represents AI provider configuration

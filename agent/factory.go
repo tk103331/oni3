@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/tk103331/oni3/config"
 )
@@ -48,16 +47,7 @@ func (f *Factory) CreateAgent(name string) (Agent, error) {
 	}
 	if f.skill != "" {
 		if sk, ok := f.cfg.Skills[f.skill]; ok {
-			if system := strings.TrimSpace(sk.System); system != "" {
-				if strings.TrimSpace(agentCfg.System) != "" {
-					agentCfg.System = system + "\n\n" + agentCfg.System
-				} else {
-					agentCfg.System = system
-				}
-			}
-			if len(sk.Tools) > 0 {
-				agentCfg.Tools = append(append([]string{}, agentCfg.Tools...), sk.Tools...)
-			}
+			ApplySkill(&agentCfg, sk)
 		}
 	}
 

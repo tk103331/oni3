@@ -23,6 +23,11 @@ func (r *ReactAgent) systemPrompt(cfg *config.Config) string {
 		return strings.Join(sections, "\n\n")
 	}
 
+	// Skills are announced, not inlined: the model reads only the one it needs.
+	if catalog := skillsCatalog(cfg, r.config.ActiveSkill); catalog != "" {
+		sections = append(sections, catalog)
+	}
+
 	for _, toolName := range r.config.Tools {
 		tl, ok := cfg.Tools[toolName]
 		if !ok || tl.Type != tools.SubagentToolType {

@@ -55,16 +55,7 @@ func (app *AgentApp) effectiveAgentConfig() (config.Agent, bool) {
 	}
 	if app.skill != "" {
 		if sk, ok := cfg.Skills[app.skill]; ok {
-			if s := strings.TrimSpace(sk.System); s != "" {
-				if strings.TrimSpace(ac.System) != "" {
-					ac.System = s + "\n\n" + ac.System
-				} else {
-					ac.System = s
-				}
-			}
-			if len(sk.Tools) > 0 {
-				ac.Tools = append(append([]string{}, ac.Tools...), sk.Tools...)
-			}
+			agent.ApplySkill(&ac, sk)
 		}
 	}
 	// Interactive sessions always expose the ask/task tools; the TUI
@@ -307,6 +298,28 @@ func providerValueLabels(cfg *config.Config) []string {
 	return labels
 }
 
+// skillUsageList renders the /skill listing: one line per skill with its
+// description and, for SKILL.md skills, the document the model reads.
+func skillUsageList(cfg *config.Config) string {
+	if cfg == nil || len(cfg.Skills) == 0 {
+		return "可用 skill：（无）\n目录：" + strings.Join(config.SkillDirectories(), ", ")
+	}
+	var b strings.Builder
+	b.WriteString("可用 skill：")
+	for _, name := range sortedKeys(cfg.Skills) {
+		skill := cfg.Skills[name]
+		b.WriteString("\n  · " + name)
+		if d := strings.TrimSpace(skill.Description); d != "" {
+			b.WriteString(" — " + d)
+		}
+		if skill.Dir != "" {
+			b.WriteString("（SKILL.md）")
+		}
+	}
+	b.WriteString("\n目录：" + strings.Join(config.SkillDirectories(), ", "))
+	return b.String()
+}
+
 // skillValueLabels annotates the /skill candidates with the skill description
 // from the configuration or its markdown file.
 func skillValueLabels(cfg *config.Config) []string {
@@ -461,8 +474,7 @@ func (app *AgentApp) executeSlash(input string) CommandResult {
 
 	case "skill":
 		if arg == "" {
-			return CommandResult{Message: "用法：/skill <name> [消息] 或 /skill:<name> [消息]（用 /skill off 取消选择）\n带消息时选择 skill 并立即用它处理这条消息\n可用 skill：" + strings.Join(append([]string{"off"}, sortedKeys(cfg.Skills)...), ", ") +
-				"\n目录：" + strings.Join(config.SkillDirectories(), ", "), Error: true}
+			return CommandResult{Message: "用法：/skill <name> [消息] 或 /skill:<name> [消息]（用 /skill off 取消选择）\n带消息时选择 skill 并立即用它处理这条消息\n" + skillUsageList(cfg), Error: true}
 		}
 		// Everything after the skill name is the message for the turn, so
 		// "/skill coder 修复登录 bug" selects coder and runs it right away.

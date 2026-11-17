@@ -159,35 +159,52 @@ settings:
 
 `run` / `acp` 模式没有可询问的界面，工具直接执行。
 
-`skills` 是 `config.yml` 中的可切换能力预设（扩展 system prompt、可追加工具）：
+skill 采用 [Agent Skills](https://docs.claude.com/en/docs/agents-and-tools/agent-skills) 的目录布局：一个 skill 是一个目录，内含 `SKILL.md`，可附带资源文件（参考资料、脚本、素材）。
+
+```
+.oni3/skills/                     # 项目级 skill（优先）
+  code-review/
+    SKILL.md
+    references/checklist.md
+~/.oni3/skills/                   # 个人 skill
+  release/SKILL.md
+~/.agents/skills/                 # 与其他 agent 工具共用的 skill
+  translator.md                   # 旧的单文件形式，继续支持
+```
+
+同名 skill 以第一个目录为准；文件形式的 skill 优先于 `config.yml` 里的同名定义；同一目录下 `SKILL.md` 优先于同名 `*.md` 文件。
+
+`SKILL.md` 可带 YAML front matter（`allowed-tools` 支持空格/逗号分隔的字符串或列表）：
+
+```markdown
+---
+name: code-review                  # 可选，默认取目录名
+description: 审查代码变更的正确性与可读性
+license: MIT
+allowed-tools: Read Grep
+metadata:
+  owner: platform
+tools: [file_system]               # oni3 扩展：/skill 时追加的工具
+---
+先看正确性问题，再看可读性。审查前先读 `references/checklist.md`。
+```
+
+skill 采用渐进披露：
+
+- system prompt 只列出每个 skill 的名称、描述和 `SKILL.md` 路径，只有摘要参与每轮 token；
+- 当 skill 相关时，模型用自己的文件工具读取 `SKILL.md` 及目录内的附带文件；
+- `/skill <name>`（或 `/skill:<name> <消息>`）是显式快捷方式：把说明内联进 system prompt，并为本次会话挂上 skill 的扩展工具。
+
+也可以在 `config.yml` 里直接声明 skill（这种只有文本、没有文件路径，适合配合 `/skill` 使用）：
 
 ```yaml
 skills:
   translator:
     description: "翻译助手：中英互译"
     system: "你是一名专业翻译，只输出译文。"
-  coder:
-    description: "编码助手"
-    system: "优先给出可运行的代码示例。"
-    tools: [shell]   # 可选：追加工具
 ```
 
-也支持**目录形式**的 skill（无需写进 config.yml），按优先级扫描两个目录：
-
-- `~/.oni3/skills/*.md`（优先）
-- `~/.agents/skills/*.md`
-
-同名 skill 以第一个目录为准；目录中的 skill 优先于 config.yml 里的定义。
-
-每个文件是一个 markdown 文档，可用 front matter 声明描述与追加工具：
-
-```markdown
----
-description: 代码审查
-tools: [shell]
----
-你是一位严格的代码审查员，先指出正确性问题……
-```
+名称建议使用小写字母、数字和连字符（最长 64 个字符）；其它写法仍会加载以保持兼容，但会在日志中提示。
 
 
 
