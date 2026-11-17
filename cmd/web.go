@@ -97,6 +97,8 @@ interface or API can be used.`,
 			WorkDir:      workDir,
 			Version:      version.Version,
 			Token:        token,
+			EnableAGUI:   boolFlag(cmd, "agui", true),
+			EnableA2A:    boolFlag(cmd, "a2a", true),
 		})
 		if err != nil {
 			return err
@@ -117,6 +119,13 @@ interface or API can be used.`,
 		fmt.Printf("Default agent: %s\n", agentName)
 		if token != "" {
 			fmt.Println("Token authentication: enabled")
+		}
+		if boolFlag(cmd, "agui", true) {
+			fmt.Printf("AG-UI endpoint: %s/agui\n", baseURL)
+		}
+		if boolFlag(cmd, "a2a", true) {
+			fmt.Printf("A2A endpoint: %s/a2a\n", baseURL)
+			fmt.Printf("Agent card: %s/.well-known/agent-card.json\n", baseURL)
 		}
 		fmt.Println("Press Ctrl+C to stop")
 		if !isLoopbackAddr(listener.Addr().String()) {
@@ -153,6 +162,22 @@ interface or API can be used.`,
 		}
 		return nil
 	},
+}
+
+var serveCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Serve agents over HTTP, AG-UI and A2A",
+	Long:  webCmd.Long,
+	Args:  cobra.NoArgs,
+	RunE:  webCmd.RunE,
+}
+
+func boolFlag(cmd *cobra.Command, name string, fallback bool) bool {
+	value, err := cmd.Flags().GetBool(name)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
 
 // webURL renders a browser URL for a listener address, replacing wildcard
@@ -197,9 +222,13 @@ func openBrowser(url string) error {
 }
 
 func init() {
-	RootCmd.AddCommand(webCmd)
-	webCmd.Flags().String("addr", "127.0.0.1:8080", "HTTP listen address")
-	webCmd.Flags().StringP("agent", "a", "", "Default agent (default: last used or the built-in OniThree agent)")
-	webCmd.Flags().String("token", "", "Require this access token (default: $ONI3_WEB_TOKEN)")
-	webCmd.Flags().Bool("open", false, "Open the interface in the default browser")
+	RootCmd.AddCommand(webCmd, serveCmd)
+	for _, command := range []*cobra.Command{webCmd, serveCmd} {
+		command.Flags().String("addr", "127.0.0.1:8080", "HTTP listen address")
+		command.Flags().StringP("agent", "a", "", "Default agent (default: last used or the built-in OniThree agent)")
+		command.Flags().String("token", "", "Require this access token (default: $ONI3_WEB_TOKEN)")
+		command.Flags().Bool("open", false, "Open the interface in the default browser")
+		command.Flags().Bool("agui", true, "Expose the AG-UI endpoint")
+		command.Flags().Bool("a2a", true, "Expose the A2A JSON-RPC and agent-card endpoints")
+	}
 }

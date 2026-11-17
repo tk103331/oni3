@@ -23,6 +23,9 @@ import (
 	"time"
 
 	"github.com/tk103331/oni3/config"
+	a2aprotocol "github.com/tk103331/oni3/protocol/a2a"
+	aguiprotocol "github.com/tk103331/oni3/protocol/agui"
+	"github.com/tk103331/oni3/runtime"
 	"github.com/tk103331/oni3/session"
 )
 
@@ -41,6 +44,10 @@ type Options struct {
 	Version string
 	// Token enables bearer-token authentication when non-empty.
 	Token string
+	// EnableAGUI mounts the AG-UI SSE endpoint.
+	EnableAGUI bool
+	// EnableA2A mounts the A2A JSON-RPC and agent-card endpoints.
+	EnableA2A bool
 }
 
 // Server exposes configured agents over HTTP.
@@ -61,6 +68,9 @@ type Server struct {
 
 	approvedMu sync.Mutex
 	approved   map[string]map[string]bool
+
+	agui *aguiprotocol.Server
+	a2a  *a2aprotocol.Server
 }
 
 // New creates a web server for cfg.
@@ -102,6 +112,27 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	if token := strings.TrimSpace(opts.Token); token != "" {
 		s.tokenHash = hashToken(token)
 		s.authCookie = tokenCookieValue(token)
+	}
+
+	if opts.EnableAGUI || opts.EnableA2A {
+		runner, err := runtime.New(cfg)
+		if err != nil {
+			return nil, err
+		}
+		if opts.EnableAGUI {
+			handler, err := aguiprotocol.New(runner, agentName)
+			if err != nil {
+				return nil, err
+			}
+			s.agui = handler
+		}
+		if opts.EnableA2A {
+			handler, err := a2aprotocol.New(cfg, runner, agentName, opts.Version, s.tokenHash != "")
+			if err != nil {
+				return nil, err
+			}
+			s.a2a = handler
+		}
 	}
 	s.routes()
 	return s, nil
@@ -176,6 +207,22 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/auth", s.handleAuth)
 	s.mux.HandleFunc("POST /api/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/logout", s.handleLogout)
+	if s.agui != nil {
+		s.mux.Handle("POST /agui", s.agui.Handler(""))
+		s.mux.HandleFunc("POST /agents/{agent}/agui", func(w http.ResponseWriter, r *http.Request) {
+			s.agui.Handler(r.PathValue("agent")).ServeHTTP(w, r)
+		})
+	}
+	if s.a2a != nil {
+		s.mux.Handle("POST /a2a", s.a2a.Handler(""))
+		s.mux.HandleFunc("POST /agents/{agent}/a2a", func(w http.ResponseWriter, r *http.Request) {
+			s.a2a.Handler(r.PathValue("agent")).ServeHTTP(w, r)
+		})
+		s.mux.Handle("GET /.well-known/agent-card.json", s.a2a.CardHandler(""))
+		s.mux.HandleFunc("GET /agents/{agent}/.well-known/agent-card.json", func(w http.ResponseWriter, r *http.Request) {
+			s.a2a.CardHandler(r.PathValue("agent")).ServeHTTP(w, r)
+		})
+	}
 	s.mux.HandleFunc("GET /", s.handleIndex)
 }
 

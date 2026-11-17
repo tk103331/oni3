@@ -398,7 +398,6 @@ func (t *ToolCallCallback) OnEnd(ctx context.Context, info *callbacks.RunInfo, o
 	default:
 		result = fmt.Sprintf("%v", output)
 	}
-	result = truncateText(result, 197)
 
 	logger.Debug("AGENT", fmt.Sprintf("Tool %s finished", info.Name))
 	t.emit(ToolCallInfo{

@@ -7,6 +7,7 @@ Oni3 是一个基于 [CloudWeGo Eino](https://github.com/cloudwego/eino) 框架�
 - **智能 Agent 系统**：基于 ReAct 模式的 AI Agent，支持工具调用和推理
 - **交互式 TUI**：基于 TUI 的终端界面，可与 Agent 实时对话，支持斜杠命令、工具审批与会话恢复
 - **Web 模式**：本地浏览器界面，支持流式回复、工具卡片、审批操作、共享会话历史与可选 Token 认证
+- **AG-UI 与 A2A**：原生 AG-UI SSE 与 A2A 1.0 JSON-RPC 端点，支持 Agent Card、流式输出、中断恢复与任务持久化
 - **ACP Agent 模式**：可作为 [Agent Client Protocol](https://agentclientprotocol.com) Agent 运行，供 Zed 等编辑器接入
 - **首次运行引导**：内置常用 provider 预设，在界面中选择、输入 API Key 并导入模型，无需编辑 YAML
 - **丰富的工具生态**：内置多种工具，包括搜索、浏览器、命令行、HTTP 请求等
@@ -297,7 +298,36 @@ Token 认证可选，默认关闭。通过 `--token`（或 `ONI3_WEB_TOKEN`）�
 
 页面使用一组小型 HTTP API：`/api/bootstrap`、`/api/agents`、`/api/models`、`/api/sessions`、`/api/chat`（Server-Sent Events）、`/api/respond` 与 `/api/cancel`。
 
-### 6. MCP 服务端模式
+### 6. AG-UI 与 A2A
+
+`oni3 web` 会在同一个监听地址上同时提供 AG-UI 与 A2A，并复用同一套 Token 认证。两种协议都走共享执行层，因此使用的 Agent、工具、审批、会话与模型选择与 TUI 完全一致。
+
+```bash
+oni3 serve --token my-secret              # 等价于 web，也可使用 serve 命令
+oni3 web --agui=false                     # 关闭 AG-UI
+oni3 web --a2a=false                      # 关闭 A2A
+```
+
+AG-UI：
+
+- `POST /agui` 接收 `RunAgentInput`（`threadId`、`runId`、`messages`、`forwardedProps`、`resume`），返回 `text/event-stream`
+- `forwardedProps.agent` 选择 Agent，`forwardedProps.model` 可选指定模型别名；省略时使用默认 Agent
+- `threadId` 就是 Oni3 会话 ID，因此对话可以在 TUI、ACP 与 AG-UI 之间继续
+- 事件包括 `RUN_STARTED`、`TEXT_MESSAGE_*`、`REASONING_*`、`TOOL_CALL_*`、`STATE_SNAPSHOT`、`RUN_ERROR` 与 `RUN_FINISHED`
+- `ask_user` 与工具审批会以 `RUN_FINISHED` 的 interrupt 结束当前流；客户端再次请求并携带 `resume: [{"interruptId": "...", "status": "resolved", "payload": {...}}]` 即可恢复被挂起的运行
+- 单 Agent 便捷端点：`POST /agents/{agent}/agui`
+
+A2A 1.0：
+
+- `GET /.well-known/agent-card.json` 与 `GET /agents/{agent}/.well-known/agent-card.json` 为每个 Agent 发布一张 Card
+- `POST /a2a` 与 `POST /agents/{agent}/a2a` 实现 JSON-RPC 2.0 方法 `SendMessage`、`SendStreamingMessage`、`GetTask`、`ListTasks`、`CancelTask`、`SubscribeToTask`（同时兼容 `message/send` 等 0.3 斜杠方法名）
+- 流式方法在 `text/event-stream` 帧中返回 JSON-RPC 响应，result 使用 `task`、`statusUpdate`、`artifactUpdate`、`message` 包装
+- 任务状态使用 A2A 1.0 的 `TASK_STATE_*`；`ask_user` 与审批会把任务置为 `TASK_STATE_INPUT_REQUIRED`，针对该任务再次 `SendMessage` 即可恢复
+- 任务持久化在 `~/.oni3/a2a/tasks/`，重启后仍可查询与列出
+
+两种协议都不依赖第三方 A2A/AG-UI SDK；协议类型与传输实现位于 `protocol/agui` 与 `protocol/a2a`。
+
+### 7. MCP 服务端模式
 
 将 Oni3 本身作为 Model Context Protocol 服务器运行，提供三个工具：
 
@@ -350,7 +380,7 @@ stdout 专用于协议通信，日志写入 `~/.oni3/oni3.log`。
 }
 ```
 
-### 7. 配置示例
+### 8. 配置示例
 
 以下是一个完整的配置示例：
 

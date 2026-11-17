@@ -82,7 +82,7 @@ The same directory can be given with --cwd/-C.`,
 		// The MCP server and web modes resolve tools immediately and
 		// initialize the manager themselves. Other commands keep the
 		// non-blocking startup.
-		if cmd.Name() != "mcp" && cmd.Name() != "web" {
+		if cmd.Name() != "mcp" && cmd.Name() != "web" && cmd.Name() != "serve" {
 			go func() {
 				// Use command context for cancellation when command ends
 				ctx := cmd.Context()

@@ -10,6 +10,7 @@ oni3                 # interactive TUI (last agent / built-in agent)
 oni3 agent --agent minimax_agent
 oni3 web --open
 oni3 web --token my-secret
+oni3 serve --token my-secret   # web + AG-UI + A2A
 oni3 acp --agent minimax_agent
 ```
 

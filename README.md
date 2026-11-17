@@ -7,6 +7,7 @@ Oni3 is an intelligent AI Agent command-line tool based on the [CloudWeGo Eino](
 - **Intelligent Agent System**: AI Agent based on ReAct pattern with tool calling and reasoning capabilities
 - **Interactive TUI**: Terminal UI for real-time conversations with agents, including slash commands, tool approval and session resume
 - **Web Mode**: Local browser interface with streaming replies, tool cards, approvals, shared session history and optional token authentication
+- **AG-UI and A2A**: Native AG-UI SSE and A2A 1.0 JSON-RPC endpoints, with agent cards, streaming, interrupts and task persistence
 - **ACP Agent Mode**: Runs as an [Agent Client Protocol](https://agentclientprotocol.com) agent so editors like Zed can drive Oni3
 - **First-Run Onboarding**: Common providers ship as built-in presets; pick one, enter an API key and import its models without editing YAML
 - **Rich Tool Ecosystem**: Built-in various tools including search, browser, command line, HTTP requests, etc.
@@ -298,7 +299,36 @@ The server listens on `127.0.0.1` by default. Binding it to a non-loopback addre
 
 The page uses a small HTTP API: `/api/bootstrap`, `/api/agents`, `/api/models`, `/api/sessions`, `/api/chat` (Server-Sent Events), `/api/respond` and `/api/cancel`.
 
-### 6. MCP Server Mode
+### 6. AG-UI and A2A
+
+`oni3 web` also exposes AG-UI and A2A on the same listener and behind the same token authentication. Both protocols run through the shared execution layer, so they use the same agents, tools, approvals, sessions and model selection as the TUI.
+
+```bash
+oni3 serve --token my-secret              # same as web, also reachable as `serve`
+oni3 web --agui=false                     # disable AG-UI
+oni3 web --a2a=false                      # disable A2A
+```
+
+AG-UI:
+
+- `POST /agui` accepts a `RunAgentInput` (`threadId`, `runId`, `messages`, `forwardedProps`, `resume`) and streams `text/event-stream` frames
+- `forwardedProps.agent` selects the agent and `forwardedProps.model` optionally selects a model alias; the default agent is used when omitted
+- `threadId` is the Oni3 session ID, so conversations remain resumable from the TUI and ACP
+- events include `RUN_STARTED`, `TEXT_MESSAGE_*`, `REASONING_*`, `TOOL_CALL_*`, `STATE_SNAPSHOT`, `RUN_ERROR` and `RUN_FINISHED`
+- `ask_user` and tool approvals end the stream with a `RUN_FINISHED` interrupt; send a new request with `resume: [{"interruptId": "...", "status": "resolved", "payload": {...}}]` to continue the parked run
+- per-agent convenience endpoint: `POST /agents/{agent}/agui`
+
+A2A 1.0:
+
+- `GET /.well-known/agent-card.json` and `GET /agents/{agent}/.well-known/agent-card.json` publish one card per agent
+- `POST /a2a` and `POST /agents/{agent}/a2a` implement JSON-RPC 2.0 methods `SendMessage`, `SendStreamingMessage`, `GetTask`, `ListTasks`, `CancelTask` and `SubscribeToTask` (the 0.3 slash names such as `message/send` are accepted too)
+- streaming methods return JSON-RPC responses in `text/event-stream` frames, using `task`, `statusUpdate`, `artifactUpdate` and `message` result wrappers
+- task states use the A2A 1.0 `TASK_STATE_*` values; `ask_user` and approvals move a task to `TASK_STATE_INPUT_REQUIRED`, and the next `SendMessage` for that task resumes it
+- tasks are persisted under `~/.oni3/a2a/tasks/` and can be listed or polled after a restart
+
+Neither protocol depends on a third-party A2A or AG-UI SDK; the wire types and transports live in `protocol/agui` and `protocol/a2a`.
+
+### 7. MCP Server Mode
 
 Run Oni3 itself as a Model Context Protocol server. It exposes three tools:
 
@@ -351,7 +381,7 @@ Example client configuration:
 }
 ```
 
-### 7. Configuration Example
+### 8. Configuration Example
 
 Here's a complete configuration example:
 
