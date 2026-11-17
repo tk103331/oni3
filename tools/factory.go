@@ -20,6 +20,7 @@ type toolDefinition struct {
 // One catalog defines accepted types, constructors and configuration field names.
 // No case folding or historical type aliases are applied.
 var toolDefinitions = map[string]toolDefinition{
+	A2AToolType:                {NewA2ATool, "agents timeout poll_interval_ms"},
 	AskUserToolType:            {NewAskUserTool, ""},
 	BingSearchToolType:         {NewBingSearchTool, "api_key max_results"},
 	BrowserUseToolType:         {NewBrowserUseTool, "headless disable_security chrome_path proxy args"},

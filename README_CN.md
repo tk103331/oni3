@@ -327,6 +327,28 @@ A2A 1.0：
 
 两种协议都不依赖第三方 A2A/AG-UI SDK；协议类型与传输实现位于 `protocol/agui` 与 `protocol/a2a`。
 
+Oni3 也可以作为非流式客户端调用远端 A2A Agent。先在 `a2a_agents` 中登记远端 Agent，再通过 `a2a` 工具暴露给模型：
+
+```yaml
+a2a_agents:
+  remote_researcher:
+    card_url: https://example.com/.well-known/agent-card.json
+    description: 远端研究 Agent
+    token_env: REMOTE_A2A_TOKEN   # 也可以使用 token 直接填写
+
+tools:
+  remote_a2a:
+    type: a2a
+    config:
+      agents: [remote_researcher]  # 白名单；省略时允许全部已配置 Agent
+      timeout: 300                 # 整体超时秒数，默认 300
+      poll_interval_ms: 1000       # 任务轮询间隔，默认 1000
+```
+
+工具参数为 `agent`（必填）、`prompt`（新任务必填），以及可选的 `task_id` 与 `context_id`。返回 JSON 包含 `agent`、`state`、`task_id`、`context_id`、`answer` 或 `message`；远端要求补充信息时还会返回 `options`。第一阶段不做流式：Oni3 先发现 Agent Card，调用 `SendMessage`，再轮询 `GetTask`，直到任务完成或进入 `TASK_STATE_INPUT_REQUIRED`。恢复中断任务时传入同一个 `task_id`，并把回答放进 `prompt`；只轮询时省略 `prompt`。调用超时会返回 `state: "timeout"` 和 `task_id`，后续调用可继续轮询。
+
+远端调用会被标记为危险操作，因此在默认审批策略下，prompt 离开本机前会要求确认。远端地址只能来自 `a2a_agents`，模型不能传入任意 URL，请求目标因此由配置控制。
+
 ### 7. MCP 服务端模式
 
 将 Oni3 本身作为 Model Context Protocol 服务器运行，提供三个工具：

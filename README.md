@@ -328,6 +328,28 @@ A2A 1.0:
 
 Neither protocol depends on a third-party A2A or AG-UI SDK; the wire types and transports live in `protocol/agui` and `protocol/a2a`.
 
+Oni3 can also call remote A2A agents as a non-streaming client. Register each remote agent under `a2a_agents`, then expose it to a model through an `a2a` tool:
+
+```yaml
+a2a_agents:
+  remote_researcher:
+    card_url: https://example.com/.well-known/agent-card.json
+    description: Remote research agent
+    token_env: REMOTE_A2A_TOKEN   # or use `token` for a literal value
+
+tools:
+  remote_a2a:
+    type: a2a
+    config:
+      agents: [remote_researcher]  # allowlist; omit to allow every configured agent
+      timeout: 300                 # overall timeout in seconds, default 300
+      poll_interval_ms: 1000       # task polling interval, default 1000
+```
+
+The tool takes `agent` (required), `prompt` (required for a new task), and optional `task_id` and `context_id`. It returns JSON with `agent`, `state`, `task_id`, `context_id`, `answer` or `message`, and `options` when the remote agent asks a question. The first phase is non-streaming: Oni3 discovers the Agent Card, calls `SendMessage`, and polls `GetTask` until the task completes or reaches `TASK_STATE_INPUT_REQUIRED`. Resume an interrupted task by passing the same `task_id` and putting the answer in `prompt`; omit `prompt` to only poll. If the call times out, the result has `state: "timeout"` plus the `task_id`, so a later call can continue polling.
+
+Remote calls are flagged as dangerous, so the default approval policy asks before the prompt leaves the machine. Remote URLs come only from `a2a_agents`; models cannot pass arbitrary URLs, which keeps request targets under configuration control.
+
 ### 7. MCP Server Mode
 
 Run Oni3 itself as a Model Context Protocol server. It exposes three tools:

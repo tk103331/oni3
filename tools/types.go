@@ -3,6 +3,7 @@ package tools
 // Tool type identifiers use lowercase snake_case. The default instance name is
 // the type identifier; configured instances may use their own explicit names.
 const (
+	A2AToolType                = "a2a"
 	AskUserToolType            = "ask_user"
 	BingSearchToolType         = "bing_search"
 	BrowserUseToolType         = "browser_use"
@@ -22,6 +23,7 @@ const (
 )
 
 const (
+	A2AToolName         = A2AToolType
 	AskUserToolName     = AskUserToolType
 	BrowserUseToolName  = BrowserUseToolType
 	CommandLineToolName = CommandLineToolType

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -28,6 +29,7 @@ type Config struct {
 	Models        map[string]Model          `yaml:"models,omitempty"`
 	DefaultModel  string                    `yaml:"default_model,omitempty"`
 	MCPServers    map[string]MCPServer      `yaml:"mcp_servers,omitempty"`
+	A2AAgents     map[string]A2AAgent       `yaml:"a2a_agents,omitempty"`
 	Tools         map[string]Tool           `yaml:"tools,omitempty"`
 	Skills        map[string]Skill          `yaml:"skills,omitempty"`
 	Settings      Settings                  `yaml:"settings,omitempty"`
@@ -124,6 +126,19 @@ type MCPServer struct {
 	// for sse & streamable_http
 	URL     string            `yaml:"url,omitempty"`
 	Headers map[string]string `yaml:"headers,omitempty"`
+}
+
+// A2AAgent describes a remote agent reached over the A2A protocol.
+type A2AAgent struct {
+	// CardURL points at the remote /.well-known/agent-card.json document.
+	CardURL string `yaml:"card_url"`
+	// Description is shown to the model when choosing a remote agent.
+	Description string `yaml:"description,omitempty"`
+	// Token is sent as a Bearer token when non-empty.
+	Token string `yaml:"token,omitempty"`
+	// TokenEnv names an environment variable holding the Bearer token. It is
+	// read when the remote agent is first used.
+	TokenEnv string `yaml:"token_env,omitempty"`
 }
 
 // Tool represents tool configuration
@@ -250,6 +265,18 @@ func LoadConfig(configPath string) (*Config, error) {
 		}
 		if err := ValidateMCPType(server.Type); err != nil {
 			return nil, fmt.Errorf("MCP server %q: %w", name, err)
+		}
+	}
+	for name, remote := range cfg.A2AAgents {
+		if strings.TrimSpace(name) == "" {
+			return nil, fmt.Errorf("A2A agent name must not be empty")
+		}
+		if strings.TrimSpace(remote.CardURL) == "" {
+			return nil, fmt.Errorf("A2A agent %q: card_url is required", name)
+		}
+		parsed, err := url.Parse(remote.CardURL)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+			return nil, fmt.Errorf("A2A agent %q: card_url must be an http(s) URL", name)
 		}
 	}
 
