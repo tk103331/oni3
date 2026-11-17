@@ -9,6 +9,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/tool/mcp"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/schema"
+	"github.com/mark3labs/mcp-go/client"
 	mcpProtocol "github.com/mark3labs/mcp-go/mcp"
 	"github.com/tk103331/oni3/config"
 )
@@ -77,43 +78,69 @@ func (c *Client) registerTool(ctx context.Context, serverName string, remote too
 	return nil
 }
 
-// discoverTools discovers tools from MCP servers
+// discoverTools runs the handshake for every already-created client and
+// registers its tools. It stops at the first failure, which keeps the
+// all-or-nothing semantic for callers that hand in a fixed client set.
+// Initialize drives servers one by one instead, so a single broken server
+// cannot take the other servers down.
 func (c *Client) discoverTools(ctx context.Context) error {
 	for serverName, mcpClient := range c.clients {
-		// Check if client is nil
-		if mcpClient == nil {
-			return fmt.Errorf("MCP client for server %s is not initialized", serverName)
+		if err := c.connectServer(ctx, serverName, mcpClient); err != nil {
+			return err
 		}
+	}
+	return nil
+}
 
-		// Initialize MCP client connection
-		initRequest := mcpProtocol.InitializeRequest{
-			Params: mcpProtocol.InitializeParams{
-				ProtocolVersion: "2024-11-05",
-				ClientInfo: mcpProtocol.Implementation{
-					Name:    "oni3",
-					Version: "1.0.0",
-				},
+// connectServer initializes one MCP connection and registers the tools it
+// exposes. Registrations are rolled back when any tool is unusable, so a
+// server that fails halfway through contributes nothing.
+func (c *Client) connectServer(ctx context.Context, serverName string, mcpClient *client.Client) error {
+	// Check if client is nil
+	if mcpClient == nil {
+		return fmt.Errorf("MCP client for server %s is not initialized", serverName)
+	}
+
+	// Initialize MCP client connection
+	initRequest := mcpProtocol.InitializeRequest{
+		Params: mcpProtocol.InitializeParams{
+			ProtocolVersion: "2024-11-05",
+			ClientInfo: mcpProtocol.Implementation{
+				Name:    "oni3",
+				Version: "1.0.0",
 			},
-		}
+		},
+	}
 
-		_, err := mcpClient.Initialize(ctx, initRequest)
-		if err != nil {
-			return fmt.Errorf("failed to initialize MCP client for server %s: %w", serverName, err)
-		}
+	if _, err := mcpClient.Initialize(ctx, initRequest); err != nil {
+		return fmt.Errorf("failed to initialize MCP client for server %s: %w", serverName, err)
+	}
 
-		// Use eino-ext's mcp package to get tools
-		mcpTools, err := mcp.GetTools(ctx, &mcp.Config{Cli: mcpClient})
-		if err != nil {
-			return fmt.Errorf("failed to get tools from server %s: %w", serverName, err)
-		}
+	// Use eino-ext's mcp package to get tools
+	mcpTools, err := mcp.GetTools(ctx, &mcp.Config{Cli: mcpClient})
+	if err != nil {
+		return fmt.Errorf("failed to get tools from server %s: %w", serverName, err)
+	}
 
-		for _, mcpTool := range mcpTools {
-			if invokableTool, ok := mcpTool.(tool.InvokableTool); ok {
-				if err := c.registerTool(ctx, serverName, invokableTool); err != nil {
-					return err
-				}
+	for _, mcpTool := range mcpTools {
+		if invokableTool, ok := mcpTool.(tool.InvokableTool); ok {
+			if err := c.registerTool(ctx, serverName, invokableTool); err != nil {
+				c.unregisterServer(serverName)
+				return err
 			}
 		}
 	}
 	return nil
+}
+
+// unregisterServer drops every tool registered by one server, leaving other
+// servers untouched. It runs under Initialize's write lock.
+func (c *Client) unregisterServer(serverName string) {
+	for name, owner := range c.toolServers {
+		if owner != serverName {
+			continue
+		}
+		delete(c.tools, name)
+		delete(c.toolServers, name)
+	}
 }

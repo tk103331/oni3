@@ -7,12 +7,14 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/cloudwego/eino/schema"
 	"github.com/tk103331/oni3/agent"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/mcp"
 	"github.com/tk103331/oni3/session"
 	"github.com/tk103331/oni3/tools"
 )
@@ -108,6 +110,54 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	return app, nil
 }
 
+// mcpStatusWait bounds how long the interface waits for the background MCP
+// initialization before giving up on a startup notice.
+const mcpStatusWait = 45 * time.Second
+
+// mcpFailureNotice renders the transcript notice for servers that could not be
+// initialized. It returns an empty string when every server is usable.
+func mcpFailureNotice(failures map[string]error) string {
+	if len(failures) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("MCP 服务未就绪，其余服务与内置工具不受影响：")
+	for _, name := range sortedKeys(failures) {
+		b.WriteString("\n  · ")
+		b.WriteString(name)
+		b.WriteString(" — ")
+		b.WriteString(mcp.ShortError(failures[name]))
+	}
+	b.WriteString("\n用 /mcp 查看服务状态")
+	return b.String()
+}
+
+// watchMCPStatus reports MCP servers that failed to initialize.
+//
+// Server connections happen in the background while the TUI already owns the
+// terminal, so their outcome cannot be printed to stderr: a stray write lands
+// in the middle of a frame and garbles the whole layout. It is delivered as a
+// transcript notice instead, once initialization settled. Servers that did
+// connect and the built-in tools keep working; only the failed ones are
+// missing.
+func (app *AgentApp) watchMCPStatus() {
+	cfg := config.GetConfig()
+	if cfg == nil || len(cfg.MCPServers) == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(app.ctx, mcpStatusWait)
+		defer cancel()
+		manager := mcp.WaitGlobalManager(ctx)
+		if manager == nil {
+			return
+		}
+		if notice := mcpFailureNotice(manager.ServerErrors()); notice != "" {
+			app.program.Send(NoticeMsg(notice))
+		}
+	}()
+}
+
 // headerSubtitle is the label next to the window title: the active agent and
 // the model actually in use (a /model switch or a remembered choice wins over
 // the configured default).
@@ -175,6 +225,9 @@ func (app *AgentApp) Run() error {
 	// (if any) would be dropped by the terminal anyway.
 	defer reportStatus("idle", "", "")
 	app.openFirstRunProvider()
+	// Started here, not in the constructor: the notice is delivered through the
+	// running program, and nothing must queue on a program that never runs.
+	app.watchMCPStatus()
 	return runTUI(app.program)
 }
 

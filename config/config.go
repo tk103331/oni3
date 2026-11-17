@@ -126,6 +126,10 @@ type MCPServer struct {
 	// for sse & streamable_http
 	URL     string            `yaml:"url,omitempty"`
 	Headers map[string]string `yaml:"headers,omitempty"`
+	// Timeout bounds connecting to this server, in seconds. It covers the MCP
+	// handshake and tool discovery; zero uses the default (60). A slow stdio
+	// launcher (npx, uvx) may need more.
+	Timeout int `yaml:"timeout,omitempty"`
 }
 
 // A2AAgent describes a remote agent reached over the A2A protocol.

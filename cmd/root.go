@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/internal/datadir"
+	"github.com/tk103331/oni3/logger"
 	"github.com/tk103331/oni3/mcp"
 	"github.com/tk103331/oni3/version"
 )
@@ -90,7 +91,11 @@ The same directory can be given with --cwd/-C.`,
 					ctx = context.Background()
 				}
 				if err := mcp.InitializeGlobalManager(ctx, cfg); err != nil {
-					fmt.Fprintf(os.Stderr, "Failed to initialize MCP manager asynchronously: %v\n", err)
+					// Everything else on this path is a TUI, which already owns the
+					// terminal: a stderr write would land in the middle of a frame and
+					// garble the layout. Log it and let the interface report per-server
+					// failures from the manager's recorded state.
+					logger.Error("MCP", fmt.Sprintf("Failed to initialize MCP manager: %v", err))
 				}
 			}()
 		}

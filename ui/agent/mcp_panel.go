@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/mcp"
@@ -49,6 +50,9 @@ type mcpRow struct {
 	disabled bool
 	tools    int
 	label    string
+	// failure holds why the server could not be initialized this session; it
+	// replaces the endpoint label so the panel explains the missing tools.
+	failure string
 }
 
 // The action bar entries of the MCP panel.
@@ -80,8 +84,10 @@ func (m *ViewModel) openMCPPanel(cfg *config.Config, disabled map[string]bool, o
 		return
 	}
 	counts := map[string]int{}
+	failures := map[string]error{}
 	if manager := mcp.GetGlobalManager(); manager != nil {
 		counts = manager.ToolCountsByServer()
+		failures = manager.ServerErrors()
 	}
 	if disabled == nil {
 		disabled = map[string]bool{}
@@ -93,6 +99,7 @@ func (m *ViewModel) openMCPPanel(cfg *config.Config, disabled map[string]bool, o
 			disabled: disabled[name],
 			tools:    counts[name],
 			label:    mcpServerLabel(name, cfg.MCPServers[name]),
+			failure:  mcp.ShortError(failures[name]),
 		})
 	}
 	m.mcpPanelState = &mcpPanel{cfg: cfg, rows: rows, picked: map[string]bool{}, focus: paneFocusList, onToggle: onToggle}
@@ -118,15 +125,24 @@ func (p *mcpPanel) pickedRows() []mcpRow {
 	return rows
 }
 
-// mcpRefreshRows re-reads each row's disabled state after a toggle.
+// mcpRefreshRows re-reads each row's runtime state after a toggle: enabled or
+// disabled, discovered tool count and initialization failure.
 func (m *ViewModel) mcpRefreshRows() {
 	p := m.mcpPanelState
 	if p == nil {
 		return
 	}
 	disabled := m.mcpPanelDisabled()
+	counts := map[string]int{}
+	failures := map[string]error{}
+	if manager := mcp.GetGlobalManager(); manager != nil {
+		counts = manager.ToolCountsByServer()
+		failures = manager.ServerErrors()
+	}
 	for i := range p.rows {
 		p.rows[i].disabled = disabled[p.rows[i].server]
+		p.rows[i].tools = counts[p.rows[i].server]
+		p.rows[i].failure = mcp.ShortError(failures[p.rows[i].server])
 	}
 	m.markDirty()
 }
@@ -327,11 +343,19 @@ func (m *ViewModel) mcpPanelLines() []string {
 		if r.disabled {
 			state = "⊘ 禁用"
 		}
-		text := fmt.Sprintf("%s %s  %s  %d 工具  %s", box, r.server, state, r.tools, r.label)
+		detail := r.label
+		if r.failure != "" {
+			state = "✗ 失败"
+			detail = r.failure
+		}
+		text := fmt.Sprintf("%s %s  %s  %d 工具  %s", box, r.server, state, r.tools, detail)
 		line := truncate(marker+oneLine(ansi.Strip(text)), width)
-		if i == sel && p.focus == paneFocusList {
+		switch {
+		case i == sel && p.focus == paneFocusList:
 			line = m.accentStyle(true).Render(line)
-		} else if r.disabled {
+		case r.failure != "":
+			line = lipgloss.NewStyle().Foreground(lipgloss.Color(m.theme.Error)).Render(line)
+		case r.disabled:
 			line = m.muted().Render(line)
 		}
 		lines = append(lines, line)

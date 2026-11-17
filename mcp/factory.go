@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/tk103331/oni3/config"
@@ -14,6 +15,12 @@ type Manager struct {
 	mu     sync.RWMutex
 	client *Client
 	config *config.Config
+
+	// done is closed once initialization finished, so front-ends that start
+	// while the manager is still connecting can report the outcome afterwards
+	// instead of waiting on the network inside their first frame.
+	done     chan struct{}
+	doneOnce sync.Once
 }
 
 // NewManager creates a new MCP manager
@@ -21,20 +28,27 @@ func NewManager(cfg *config.Config) *Manager {
 	return &Manager{
 		client: NewClient(cfg),
 		config: cfg,
+		done:   make(chan struct{}),
 	}
+}
+
+// Done is closed when initialization finished, successfully or not.
+func (m *Manager) Done() <-chan struct{} {
+	return m.done
+}
+
+func (m *Manager) markDone() {
+	m.doneOnce.Do(func() { close(m.done) })
 }
 
 // Initialize initializes the MCP manager
 func (m *Manager) Initialize(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	defer m.markDone()
 
-	// Validate configuration
-	if err := ValidateConfig(m.config); err != nil {
-		return NewMCPError("manager_init", "", "", fmt.Errorf("MCP manager configuration validation failed: %w", err))
-	}
-
-	// Initialize client
+	// Initialize client. Unreachable servers are recorded per server and do
+	// not abort the servers that work; see Client.Initialize.
 	if err := m.client.Initialize(ctx); err != nil {
 		return NewMCPError("manager_init", "", "", fmt.Errorf("MCP client initialization failed: %w", err))
 	}
@@ -95,6 +109,18 @@ func (m *Manager) ToolCountsByServer() map[string]int {
 	return m.client.ToolCountsByServer()
 }
 
+// ServerErrors returns the servers that could not be initialized and why. An
+// empty map means every configured server is usable this session.
+func (m *Manager) ServerErrors() map[string]error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.client == nil {
+		return map[string]error{}
+	}
+	return m.client.ServerErrors()
+}
+
 // Close closes the MCP manager
 func (m *Manager) Close() error {
 	m.mu.Lock()
@@ -128,6 +154,35 @@ func GetGlobalManager() *Manager {
 	managerMu.RLock()
 	defer managerMu.RUnlock()
 	return globalManager
+}
+
+// WaitGlobalManager waits until the global manager exists and its background
+// initialization finished, then returns it. It returns nil when ctx ends
+// first, which lets a front-end proceed with built-in tools only.
+//
+// Callers surface the result through their own interface: while a TUI owns the
+// terminal, writing the outcome to stderr would paint over the frame.
+func WaitGlobalManager(ctx context.Context) *Manager {
+	for {
+		managerMu.RLock()
+		manager := globalManager
+		managerMu.RUnlock()
+
+		if manager != nil {
+			select {
+			case <-manager.Done():
+				return manager
+			case <-ctx.Done():
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
 }
 
 // CloseGlobalManager closes the global MCP manager

@@ -105,7 +105,7 @@ The configuration file contains the following main sections:
 - `agents`: Agent configuration (system prompts, models and tools; an agent without `model` uses `default_model`, or the first model; `max_steps` caps the ReAct loop and defaults to 1000)
 - `tools`: Tool configuration (parameters and settings for custom tools)
 - `plugins`: JavaScript modules providing tools, hooks, themes, agents, models and providers
-- `mcp_servers`: MCP server configuration
+- `mcp_servers`: MCP server configuration. Each server also accepts `timeout` (seconds to connect and list tools, default 60). A server that cannot be reached is skipped for the session instead of disabling the others: `/mcp` marks it `✗ 失败` with its cause, `/status` lists it, and a startup notice in the transcript names it.
 - `settings`: Global settings including Langfuse configuration
 
 
@@ -460,6 +460,7 @@ mcp_servers:
   stdio_server:
     type: stdio
     cmd: "python"                    # Command to execute
+    timeout: 120                     # Optional connect timeout in seconds, default 60
     args:
       - "-m"
       - "your_mcp_server"             # MCP server module

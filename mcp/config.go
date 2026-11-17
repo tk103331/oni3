@@ -10,7 +10,13 @@ import (
 	"github.com/tk103331/oni3/config"
 )
 
-// ValidateConfig validates MCP configuration
+// ValidateConfig validates a complete MCP configuration, including every
+// server's own settings. It answers "is this configuration correct?".
+//
+// Runtime initialization deliberately does not use it: Client.Initialize
+// validates per server so one broken or unreachable entry cannot block the
+// servers that work. Use ValidateConfig for diagnostics and configuration
+// editing, not as a gate in front of connecting.
 func ValidateConfig(cfg *config.Config) error {
 	if cfg == nil {
 		return NewMCPError("validate", "", "", ErrInvalidConfig)
@@ -24,6 +30,17 @@ func ValidateConfig(cfg *config.Config) error {
 	}
 
 	// Validate agent's MCP server references
+	return validateConfigReferences(cfg)
+}
+
+// validateConfigReferences checks the part of the configuration that is not
+// tied to a single server. Per-server problems are detected when that server
+// is created, so one broken entry cannot block the others.
+func validateConfigReferences(cfg *config.Config) error {
+	if cfg == nil {
+		return NewMCPError("validate", "", "", ErrInvalidConfig)
+	}
+
 	for agentName, agentConfig := range cfg.Agents {
 		for _, serverName := range agentConfig.MCPServers {
 			if _, exists := cfg.MCPServers[serverName]; !exists {
@@ -44,6 +61,10 @@ func validateServerConfig(serverName string, serverConfig config.MCPServer) erro
 
 	if err := config.ValidateMCPType(serverConfig.Type); err != nil {
 		return NewMCPError("validate", serverName, "", err)
+	}
+	if serverConfig.Timeout < 0 {
+		return NewMCPError("validate", serverName, "",
+			fmt.Errorf("timeout must not be negative: %d", serverConfig.Timeout))
 	}
 	switch serverConfig.Type {
 	case config.MCPTypeStdio:

@@ -10,6 +10,7 @@ import (
 	"github.com/tk103331/oni3/agent"
 	"github.com/tk103331/oni3/config"
 	"github.com/tk103331/oni3/logger"
+	"github.com/tk103331/oni3/mcp"
 	"github.com/tk103331/oni3/session"
 	"github.com/tk103331/oni3/state"
 	"github.com/tk103331/oni3/tools"
@@ -523,6 +524,15 @@ func (app *AgentApp) setMCPServer(name string, enable bool) CommandResult {
 	if _, ok := cfg.MCPServers[name]; !ok {
 		return CommandResult{Message: fmt.Sprintf("MCP 服务不存在: %s\n可用：%s", name, strings.Join(sortedKeys(cfg.MCPServers), ", ")), Error: true}
 	}
+	// A server whose connection failed at startup has no tools to switch on:
+	// say so instead of reporting a success that changes nothing.
+	if enable {
+		if manager := mcp.GetGlobalManager(); manager != nil {
+			if err := manager.ServerErrors()[name]; err != nil {
+				return CommandResult{Message: fmt.Sprintf("MCP 服务 %s 本次启动连接失败（%s）；重启 Oni3 后重试", name, mcp.ShortError(err)), Error: true}
+			}
+		}
+	}
 
 	already := app.mcpDisabled[name] == !enable
 	if !already {
@@ -582,7 +592,13 @@ func (app *AgentApp) mcpStatusSummary() string {
 		return "未配置"
 	}
 	enabled := len(cfg.MCPServers) - len(app.mcpDisabled)
-	return fmt.Sprintf("%d/%d 启用", enabled, len(cfg.MCPServers))
+	summary := fmt.Sprintf("%d/%d 启用", enabled, len(cfg.MCPServers))
+	if manager := mcp.GetGlobalManager(); manager != nil {
+		if failures := manager.ServerErrors(); len(failures) > 0 {
+			summary += fmt.Sprintf("，%d 个未就绪：%s", len(failures), strings.Join(sortedKeys(failures), "、"))
+		}
+	}
+	return summary
 }
 
 // sessionSummary renders the active session for /status.

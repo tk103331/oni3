@@ -105,7 +105,7 @@ cp config.yml.example ~/.oni3/config.yml
 - `agents`: Agent 配置（系统提示、使用的模型和工具；未写 `model` 时使用 `default_model`，未设置则取排序第一个模型；`max_steps` 控制 ReAct 循环上限，默认 1000）
 - `tools`: 工具配置（自定义工具的参数和配置）
 - `plugins`: JavaScript 插件，提供工具、生命周期 hooks、主题、agent、模型预设与 provider
-- `mcp_servers`: MCP 服务器配置
+- `mcp_servers`: MCP 服务器配置。每个服务器可设置 `timeout`（连接并列出工具的秒数，默认 60）。某个服务器连不上时只在本次会话中跳过它，不会影响其它服务器：`/mcp` 会把它标为 `✗ 失败` 并显示原因，`/status` 会列出它，启动时还会在对话区给出提示。
 - `settings`: 全局设置，包括 Langfuse 配置
 
 ### 2. 交互式 Agent 模式
@@ -459,6 +459,7 @@ mcp_servers:
   stdio_server:
     type: stdio
     cmd: "python"                    # 要执行的命令
+    timeout: 120                     # 可选：连接超时秒数，默认 60
     args:
       - "-m"
       - "your_mcp_server"             # MCP 服务器模块
