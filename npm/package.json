@@ -1,6 +1,6 @@
 {
   "name": "@tk103331/oni3",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Oni3 — AI Agent TUI with tools, MCP and ACP support, built on Eino",
   "license": "MIT",
   "bin": {
