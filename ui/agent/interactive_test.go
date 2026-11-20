@@ -219,7 +219,7 @@ func TestFinishedTodoPanelCollapsesOnNextInput(t *testing.T) {
 	if strings.Contains(m.View(), "collect requirements") {
 		t.Fatal("expected the finished list to be folded")
 	}
-	y := 2 + m.viewportHeight() // header + rule + transcript
+	y := m.todoTop // the task panel sits right below the transcript
 	m = drive(m, tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, X: 5, Y: y})
 	if !strings.Contains(m.View(), "collect requirements") {
 		t.Fatalf("click should expand the folded panel:\n%s", m.View())

@@ -114,14 +114,22 @@ type ViewModel struct {
 
 	// Efficient line-based rendering cache: rebuilt only when content
 	// changes (dirty) and at most once per renderInterval while streaming.
-	dirty          bool
-	lastRender     time.Time
-	renderedLines  []string
-	lineOwners     []int // message index owning each rendered line (-1 = none)
-	viewStart      int   // absolute index of the first visible line (last View)
-	scrollOffset   int   // Lines from the newest end (0 = pinned to bottom)
-	spinnerFrame   int
-	spinnerStarted bool
+	dirty         bool
+	lastRender    time.Time
+	renderedLines []string
+	lineOwners    []int // message index owning each rendered line (-1 = none)
+	viewStart     int   // absolute index of the first visible line (last View)
+	// transcriptTop is the frame row where the transcript starts (header +
+	// rule), transcriptHeight its height, and todoTop the frame row of the
+	// task panel. Mouse hit-testing maps a clicked row back to a transcript
+	// line with them, so a click lands on the line that was actually
+	// clicked. All three are -1/0 until the first frame is rendered.
+	transcriptTop    int
+	transcriptHeight int
+	todoTop          int
+	scrollOffset     int // Lines from the newest end (0 = pinned to bottom)
+	spinnerFrame     int
+	spinnerStarted   bool
 }
 
 // Message type definitions
@@ -315,7 +323,10 @@ func (m *ViewModel) toggleTodosAt(screenY int) bool {
 	if !todosAllDone(m.todos) {
 		return false
 	}
-	top := 2 + m.viewportHeight() // header + rule + transcript
+	top := m.todoTop
+	if top < 0 {
+		return false
+	}
 	if screenY < top || screenY >= top+len(m.todoPanelLines()) {
 		return false
 	}
@@ -555,6 +566,10 @@ func NewViewModel(onSendMsg func(string) error) *ViewModel {
 		themeName: defaultThemeName,
 		darkMode:  dark,
 		theme:     resolveTheme(defaultThemeName, dark),
+		// The screen rows of the transcript and the task panel are only
+		// known once a frame has been rendered.
+		transcriptTop: -1,
+		todoTop:       -1,
 	}
 }
 
@@ -1178,9 +1193,11 @@ func (m *ViewModel) toggleSelectedBlock() {
 // toggleBlockAt folds or expands the reasoning/tool block at a screen row.
 // Returns true when a foldable block was toggled.
 func (m *ViewModel) toggleBlockAt(screenY int) bool {
-	const messageTop = 2 // header + rule above the transcript
-	row := screenY - messageTop
-	if row < 0 || row >= m.viewportHeight() {
+	if m.transcriptTop < 0 {
+		return false
+	}
+	row := screenY - m.transcriptTop
+	if row < 0 || row >= m.transcriptHeight {
 		return false
 	}
 	abs := m.viewStart + row
@@ -2041,18 +2058,34 @@ func (m *ViewModel) View() string {
 	// fixed position when a panel appears, and the hint line sits directly
 	// below it as the bottom-most row. A zero-row transcript contributes no
 	// line at all, so panels can use its rows on a short terminal.
+	//
+	// The screen row of every region is tracked while the frame is built:
+	// the header is two rows tall (one on a narrow terminal), so a
+	// hard-coded offset makes a mouse click select the line above the one
+	// that was clicked. Hit-testing uses these rows instead.
 	parts := []string{header, rule}
+	row := lipgloss.Height(header) + 1 // header + rule
+	m.transcriptTop = -1
+	m.todoTop = -1
+	m.transcriptHeight = 0
 	if viewport > 0 {
+		m.transcriptTop = row
+		m.transcriptHeight = viewport
 		parts = append(parts, messageArea)
+		row += viewport
 	}
 	if todoPanel := m.todoPanelLines(); len(todoPanel) > 0 {
+		m.todoTop = row
 		parts = append(parts, strings.Join(todoPanel, "\n"))
+		row += len(todoPanel)
 	}
 	if questionPanel := m.questionPanelLines(); len(questionPanel) > 0 {
 		parts = append(parts, strings.Join(questionPanel, "\n"))
+		row += len(questionPanel)
 	}
 	if paletteArea != "" {
 		parts = append(parts, paletteArea)
+		row += len(palette)
 	}
 	parts = append(parts, inputArea, helpBar)
 
@@ -2070,7 +2103,14 @@ func (m *ViewModel) View() string {
 	if m.height > 0 && len(lines) > m.height {
 		excess := len(lines) - m.height
 		if excess < viewport {
-			lines = append(lines[:3], lines[3+excess:]...)
+			// The leading transcript rows are dropped, so the transcript now
+			// starts further down: keep the hit-test mapping in sync.
+			m.viewStart += excess
+			m.transcriptHeight -= excess
+			if m.todoTop >= 0 {
+				m.todoTop -= excess
+			}
+			lines = append(lines[:m.transcriptTop], lines[m.transcriptTop+excess:]...)
 		} else {
 			lines = lines[:m.height]
 		}

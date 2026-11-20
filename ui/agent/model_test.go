@@ -448,7 +448,7 @@ func TestMouseClickTogglesToolBlock(t *testing.T) {
 	lineY := func(needle string) int {
 		for i, line := range m.renderedLines {
 			if strings.Contains(line, needle) {
-				return i - m.viewStart + 2 // header + rule
+				return i - m.viewStart + m.transcriptTop
 			}
 		}
 		t.Fatalf("rendered line %q not found", needle)
@@ -481,6 +481,45 @@ func TestMouseClickTogglesToolBlock(t *testing.T) {
 	m = drive(m, tea.MouseMsg{X: 5, Y: 0, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if m.expanded[0] || m.expanded[1] {
 		t.Fatalf("chrome click should not toggle anything: %v", m.expanded)
+	}
+}
+
+// A mouse click must land on the line that was clicked. The transcript
+// starts below a two-row header and the rule, so an offset that counts only
+// one header row makes every click select the line above the target: the
+// user has to click above the block to expand it.
+func TestMouseClickLandsOnTheClickedRow(t *testing.T) {
+	for _, width := range []int{100, 40} {
+		t.Run(fmt.Sprintf("width-%d", width), func(t *testing.T) {
+			m := NewViewModel(func(string) error { return nil })
+			m = drive(m, tea.WindowSizeMsg{Width: width, Height: 30})
+			m.SetTranscript([]Message{
+				{Type: UserMessage, Content: "question"},
+				{Type: ToolStartMessage, Name: "search", Arguments: `{"q":"x"}`, ToolStatus: ToolSuccess, Result: "the result"},
+			})
+			m.View()
+
+			// The tool line's row in the rendered frame is where the user
+			// points; the click must select that exact line.
+			frame := strings.Split(m.View(), "\n")
+			row := -1
+			for i, line := range frame {
+				if strings.Contains(line, "Search") {
+					row = i
+					break
+				}
+			}
+			if row < 0 {
+				t.Fatalf("tool line not rendered:\n%s", m.View())
+			}
+			if row < m.transcriptTop {
+				t.Fatalf("tool line is above the transcript (row %d, top %d)", row, m.transcriptTop)
+			}
+			m = drive(m, tea.MouseMsg{X: 5, Y: row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+			if !m.expanded[1] {
+				t.Fatalf("click on row %d did not expand the tool block", row)
+			}
+		})
 	}
 }
 
