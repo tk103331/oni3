@@ -2,6 +2,7 @@ package models
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cloudwego/eino-ext/components/model/ark"
 	"github.com/cloudwego/eino-ext/components/model/claude"
@@ -13,6 +14,7 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/qwen"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/tk103331/oni3/config"
+	"google.golang.org/genai"
 )
 
 // createOpenAIModel creates OpenAI model
@@ -22,6 +24,7 @@ func (f *Factory) createOpenAIModel(ctx context.Context, modelCfg *config.Model,
 		BaseURL: providerCfg.BaseURL,
 		APIKey:  providerCfg.APIKey,
 	}
+	cfg.HTTPClient = userAgentClient()
 
 	if modelCfg.MaxTokens > 0 {
 		cfg.MaxTokens = &modelCfg.MaxTokens
@@ -45,6 +48,7 @@ func (f *Factory) createAnthropicModel(ctx context.Context, modelCfg *config.Mod
 		BaseURL: &(providerCfg.BaseURL),
 		APIKey:  providerCfg.APIKey,
 	}
+	cfg.HTTPClient = userAgentClient()
 	if modelCfg.MaxTokens > 0 {
 		cfg.MaxTokens = modelCfg.MaxTokens
 	}
@@ -66,6 +70,14 @@ func (f *Factory) createGeminiModel(ctx context.Context, modelCfg *config.Model,
 		Model: modelCfg.Model,
 	}
 
+	// The Gemini client is required. It is created here so the configured
+	// User-Agent (if any) is applied to every request.
+	client, err := f.createGeminiClient(ctx, providerCfg)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Client = client
+
 	if modelCfg.MaxTokens > 0 {
 		cfg.MaxTokens = &modelCfg.MaxTokens
 	}
@@ -81,6 +93,23 @@ func (f *Factory) createGeminiModel(ctx context.Context, modelCfg *config.Model,
 	return gemini.NewChatModel(ctx, cfg)
 }
 
+// createGeminiClient builds the Google GenAI client for a Gemini provider. The
+// provider API key is used when set; otherwise the client falls back to the
+// environment (GOOGLE_API_KEY / GEMINI_API_KEY).
+func (f *Factory) createGeminiClient(ctx context.Context, providerCfg *config.Provider) (*genai.Client, error) {
+	clientCfg := &genai.ClientConfig{
+		Backend:    genai.BackendGeminiAPI,
+		APIKey:     providerCfg.APIKey,
+		HTTPClient: userAgentClient(),
+	}
+	client, err := genai.NewClient(ctx, clientCfg)
+	if err != nil {
+		// The SDK error embeds the whole client config, including the API key.
+		return nil, fmt.Errorf("cannot create gemini client (check the provider API key)")
+	}
+	return client, nil
+}
+
 // createQwenModel creates Qwen model
 func (f *Factory) createQwenModel(ctx context.Context, modelCfg *config.Model, providerCfg *config.Provider) (model.ToolCallingChatModel, error) {
 	cfg := &qwen.ChatModelConfig{
@@ -88,6 +117,7 @@ func (f *Factory) createQwenModel(ctx context.Context, modelCfg *config.Model, p
 		BaseURL: providerCfg.BaseURL,
 		APIKey:  providerCfg.APIKey,
 	}
+	cfg.HTTPClient = userAgentClient()
 
 	if modelCfg.MaxTokens > 0 {
 		cfg.MaxTokens = &modelCfg.MaxTokens
@@ -123,6 +153,7 @@ func (f *Factory) createArkModel(ctx context.Context, modelCfg *config.Model, pr
 		BaseURL: providerCfg.BaseURL,
 		APIKey:  providerCfg.APIKey,
 	}
+	cfg.HTTPClient = userAgentClient()
 
 	if modelCfg.MaxTokens > 0 {
 		cfg.MaxTokens = &modelCfg.MaxTokens
@@ -146,6 +177,7 @@ func (f *Factory) createDeepSeekModel(ctx context.Context, modelCfg *config.Mode
 		BaseURL: providerCfg.BaseURL,
 		APIKey:  providerCfg.APIKey,
 	}
+	cfg.HTTPClient = userAgentClient()
 
 	if modelCfg.MaxTokens > 0 {
 		cfg.MaxTokens = modelCfg.MaxTokens
@@ -168,6 +200,7 @@ func (f *Factory) createOllamaModel(ctx context.Context, modelCfg *config.Model,
 		Model:   modelCfg.Model,
 		BaseURL: providerCfg.BaseURL,
 	}
+	cfg.HTTPClient = userAgentClient()
 
 	// Ollama configuration is set through Options field
 	// Simplified handling here, may need to configure Options based on specific requirements

@@ -46,6 +46,7 @@ func DiscoverModels(ctx context.Context, provider config.Provider) ([]Discovered
 		return nil, fmt.Errorf("cannot create model discovery request")
 	}
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 	switch kind {
 	case config.ProviderTypeAnthropic:
 		req.Header.Set("anthropic-version", "2023-06-01")
