@@ -94,8 +94,13 @@ type ViewModel struct {
 	stopArmed   bool
 	onInterrupt func()
 
-	// Mouse capture toggle (off by default so text selection works).
-	onToggleMouse func() bool
+	// Mouse capture. It starts enabled so clicking a reasoning/tool/error
+	// header folds or expands it right away; a click on any other row (text
+	// the user may want to select and copy) releases the capture until the
+	// next turn starts. Terminals only forward mouse events while capture is
+	// on, so per-position capture cannot be event-driven the other way.
+	onSetMouse    func(enabled bool) bool
+	mouseCaptured bool
 
 	// onClear is notified when the transcript is cleared (/clear or Ctrl+L)
 	// so the host can start a fresh persistence session.
@@ -118,7 +123,11 @@ type ViewModel struct {
 	lastRender    time.Time
 	renderedLines []string
 	lineOwners    []int // message index owning each rendered line (-1 = none)
-	viewStart     int   // absolute index of the first visible line (last View)
+	// lineHeader marks the fold-header row of each line: only a header row
+	// toggles its block on click; body rows release the capture instead so
+	// expanded results stay copyable.
+	lineHeader []bool
+	viewStart  int // absolute index of the first visible line (last View)
 	// transcriptTop is the frame row where the transcript starts (header +
 	// rule), transcriptHeight its height, and todoTop the frame row of the
 	// task panel. Mouse hit-testing maps a clicked row back to a transcript
@@ -536,10 +545,42 @@ func (m *ViewModel) clearChat() {
 	m.markDirty()
 }
 
-// SetMouseToggle registers the callback used by Ctrl+Y to toggle mouse
-// capture. It returns the new state (true = mouse captured).
-func (m *ViewModel) SetMouseToggle(fn func() bool) {
-	m.onToggleMouse = fn
+// SetMouseControl registers the callback that enables or disables mouse
+// capture. It reports the applied state (true = captured).
+func (m *ViewModel) SetMouseControl(fn func(enabled bool) bool) {
+	m.onSetMouse = fn
+}
+
+// setMouseCaptured applies a capture state change. With announce set, a hint
+// explains what the new state means.
+func (m *ViewModel) setMouseCaptured(enabled bool, announce bool) {
+	if enabled == m.mouseCaptured {
+		return
+	}
+	if m.onSetMouse != nil {
+		enabled = m.onSetMouse(enabled)
+	}
+	m.mouseCaptured = enabled
+	m.markDirty()
+	if !announce {
+		return
+	}
+	if enabled {
+		m.appendCommandMessage("鼠标捕获已启用：点击思考/工具/错误标题行可展开或折叠；点击其他区域会自动释放捕获以便复制（Ctrl+Y 切换）", false)
+	} else {
+		m.appendCommandMessage("鼠标捕获已关闭：可直接用鼠标选择并复制文本；滚轮由终端转发（Ctrl+Y 重新启用）", false)
+	}
+}
+
+// releaseMouse drops the capture after a click on a non-clickable row so the
+// terminal's native text selection takes over. The next turn restores it.
+func (m *ViewModel) releaseMouse() tea.Cmd {
+	if !m.mouseCaptured {
+		return nil
+	}
+	m.setMouseCaptured(false, false)
+	m.appendCommandMessage("已释放鼠标捕获：现在可直接拖选复制；发送下一条消息时自动恢复（Ctrl+Y 可随时切换）", false)
+	return nil
 }
 
 // SetSubtitle sets the header subtitle (agent or model name).
@@ -570,6 +611,9 @@ func NewViewModel(onSendMsg func(string) error) *ViewModel {
 		// known once a frame has been rendered.
 		transcriptTop: -1,
 		todoTop:       -1,
+		// Capture starts enabled (the host enables cell-motion tracking when
+		// the program starts) so clicking a block header works right away.
+		mouseCaptured: true,
 	}
 }
 
@@ -626,6 +670,10 @@ func (m *ViewModel) startTurn(text string) tea.Cmd {
 	}
 
 	m.collapseFinishedTodos()
+	// A released capture (from clicking a text row to select it) is restored
+	// here: new reasoning/tool blocks are about to stream in and stay
+	// clickable without a manual Ctrl+Y.
+	m.setMouseCaptured(true, false)
 	m.messages = append(m.messages, Message{Type: UserMessage, Content: text})
 	m.input = ""
 	m.cursor = 0
@@ -686,12 +734,15 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollOffset -= 3
 			return m, m.clampScroll()
 		case tea.MouseButtonLeft:
-			// A left click on a reasoning/tool line folds or expands it; the
-			// finished task panel can be folded and unfolded the same way.
+			// A left click on a block header folds or expands it; the task
+			// panel toggles the same way. A click anywhere else (messages,
+			// body text, empty rows) releases the capture so the terminal's
+			// native text selection works; the next turn restores it.
 			if msg.Action == tea.MouseActionPress {
 				if m.toggleTodosAt(msg.Y) || m.toggleBlockAt(msg.Y) {
 					return m, m.clampScroll()
 				}
+				return m, m.releaseMouse()
 			}
 		}
 		return m, nil
@@ -819,16 +870,10 @@ func (m *ViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// Ctrl+Y toggles mouse capture. With capture off the terminal's
-		// native text selection / copy works; with capture on the wheel
-		// scrolls the transcript.
+		// native text selection / copy works; with capture on a click on a
+		// block header folds or expands it.
 		if msg.Type == tea.KeyCtrlY {
-			if m.onToggleMouse != nil {
-				if m.onToggleMouse() {
-					m.appendCommandMessage("鼠标捕获已启用：滚轮可滚动对话，点击思考/工具/错误行可展开或折叠；复制可在拖选时按住 Shift（多数终端），或再按 Ctrl+Y 关闭捕获", false)
-				} else {
-					m.appendCommandMessage("鼠标捕获已关闭：可直接用鼠标选择并复制文本；滚轮由终端转发（Ctrl+Y 可强制启用鼠标滚动）", false)
-				}
-			}
+			m.setMouseCaptured(!m.mouseCaptured, true)
 			return m, nil
 		}
 
@@ -1190,8 +1235,9 @@ func (m *ViewModel) toggleSelectedBlock() {
 	m.markDirty()
 }
 
-// toggleBlockAt folds or expands the reasoning/tool block at a screen row.
-// Returns true when a foldable block was toggled.
+// toggleBlockAt folds or expands the reasoning/tool block whose fold header
+// sits at a screen row. Clicks on a block's body rows are not handled here:
+// they release the capture instead so the result text stays selectable.
 func (m *ViewModel) toggleBlockAt(screenY int) bool {
 	if m.transcriptTop < 0 {
 		return false
@@ -1202,6 +1248,9 @@ func (m *ViewModel) toggleBlockAt(screenY int) bool {
 	}
 	abs := m.viewStart + row
 	if abs < 0 || abs >= len(m.lineOwners) {
+		return false
+	}
+	if !m.lineHeader[abs] {
 		return false
 	}
 	idx := m.lineOwners[abs]
@@ -1387,16 +1436,19 @@ func (m *ViewModel) updateRenderedLines() {
 	m.ensureRenderer()
 	m.renderedLines = m.renderedLines[:0]
 	m.lineOwners = m.lineOwners[:0]
+	m.lineHeader = m.lineHeader[:0]
 
 	// appendOwned tracks which message produced each line so mouse clicks can
 	// be mapped back to the block that was clicked (owner -1 = not clickable).
-	appendOwned := func(owner int, lines []string) {
-		for _, line := range lines {
+	// headerFirst marks the block's first physical row as its fold header.
+	appendOwned := func(owner int, lines []string, headerFirst bool) {
+		for i, line := range lines {
 			// Keep physical rows and mouse hit targets in sync, including
 			// multiline user messages and wrapped markdown.
 			for _, row := range strings.Split(line, "\n") {
 				m.renderedLines = append(m.renderedLines, row)
 				m.lineOwners = append(m.lineOwners, owner)
+				m.lineHeader = append(m.lineHeader, headerFirst && i == 0)
 			}
 		}
 	}
@@ -1405,34 +1457,34 @@ func (m *ViewModel) updateRenderedLines() {
 		msg := &m.messages[i]
 		switch msg.Type {
 		case UserMessage:
-			appendOwned(i, m.renderUserMessage(msg.Content))
+			appendOwned(i, m.renderUserMessage(msg.Content), false)
 		case AssistantMessage:
-			appendOwned(i, m.renderAssistantMessage(msg))
+			appendOwned(i, m.renderAssistantMessage(msg), false)
 		case ReasoningMessage:
-			appendOwned(i, m.renderReasoningMessage(msg, i, false))
+			appendOwned(i, m.renderReasoningMessage(msg, i, false), true)
 		case ToolStartMessage:
-			appendOwned(i, m.renderToolMessage(msg, i))
+			appendOwned(i, m.renderToolMessage(msg, i), true)
 		case ErrorMessage:
-			appendOwned(i, m.renderErrorMessage(msg, i))
+			appendOwned(i, m.renderErrorMessage(msg, i), true)
 		case InfoMessage:
-			appendOwned(i, m.renderInfoMessage(msg.Content))
+			appendOwned(i, m.renderInfoMessage(msg.Content), false)
 		}
 	}
 
 	// Streaming content: reasoning first (expanded while running), then the answer
 	if m.reasoningContent != "" {
 		live := &Message{Type: ReasoningMessage, Content: m.reasoningContent}
-		appendOwned(-1, m.renderReasoningMessage(live, -1, true))
+		appendOwned(-1, m.renderReasoningMessage(live, -1, true), false)
 	}
 	if m.streamingContent != "" {
-		appendOwned(-1, m.renderAssistantContent(m.streamingContent, true))
+		appendOwned(-1, m.renderAssistantContent(m.streamingContent, true), false)
 	} else if m.isWaiting && m.reasoningContent == "" {
 		// Spinner only shows while nothing streams yet — otherwise the
 		// "(typing…)" label already indicates progress.
 		spinner := m.warningStyle(true).Render(spinnerFrames[m.spinnerFrame])
 		appendOwned(-1, []string{
 			m.muted().Render("  " + spinner + " thinking..."), "",
-		})
+		}, false)
 	}
 
 	// System error (avoid duplicating a message that is already shown)
@@ -1448,7 +1500,7 @@ func (m *ViewModel) updateRenderedLines() {
 			appendOwned(-1, m.renderErrorMessage(&Message{
 				Type:    ErrorMessage,
 				Content: "⚠️ " + m.errorMsg,
-			}, -1))
+			}, -1), false)
 		}
 	}
 
@@ -1463,7 +1515,7 @@ func (m *ViewModel) updateRenderedLines() {
 			"",
 			m.muted().Render("  输入 / 选择模型、技能或恢复会话。"),
 			"",
-		})
+		}, false)
 	}
 
 	// Trailing whitespace is pointless and widens the diff the renderer

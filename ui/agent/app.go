@@ -95,16 +95,22 @@ func NewAgentApp(agentName string) (*AgentApp, error) {
 	agentModel.SetWorkDir(app.workDirLabel())
 	app.model = agentModel
 	reportStatus("idle", "", "")
-	agentModel.SetMouseToggle(app.toggleMouse)
+	agentModel.SetMouseControl(app.setMouse)
 	agentModel.SetOnClear(app.startNewSession)
 	agentModel.SetOnInterrupt(app.Interrupt)
 	app.registerCommands()
 	if app.currentModelName() == "" {
 		agentModel.appendCommandMessage("还没有配置模型：请选择一个 provider，填写 API Key 后导入模型（也可随时输入 /provider）", false)
+	} else {
+		agentModel.appendCommandMessage("鼠标捕获已启用：点击思考/工具/错误标题行可展开或折叠；点击其他区域会自动释放捕获以便复制（Ctrl+Y 切换）", false)
 	}
 
 	// Create Bubble Tea program
-	app.program = tea.NewProgram(agentModel, tea.WithAltScreen())
+	// Capture starts enabled: clicking a reasoning/tool/error header folds
+	// or expands it right away. A click on any other row releases the
+	// capture so text can be selected and copied; the next turn restores it.
+	app.mouseEnabled = true
+	app.program = tea.NewProgram(agentModel, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
 	logger.Info("UI-AGENT", fmt.Sprintf("Agent app created successfully: %s", agentName))
 	return app, nil
@@ -206,13 +212,15 @@ func (app *AgentApp) refreshSubtitle() {
 	}
 }
 
-// toggleMouse flips mouse capture and returns the new state.
-func (app *AgentApp) toggleMouse() bool {
-	app.mouseEnabled = !app.mouseEnabled
-	if app.mouseEnabled {
-		app.program.EnableMouseCellMotion()
-	} else {
-		app.program.DisableMouseCellMotion()
+// setMouse enables or disables mouse capture and reports the applied state.
+func (app *AgentApp) setMouse(enabled bool) bool {
+	if enabled != app.mouseEnabled {
+		app.mouseEnabled = enabled
+		if enabled {
+			app.program.EnableMouseCellMotion()
+		} else {
+			app.program.DisableMouseCellMotion()
+		}
 	}
 	return app.mouseEnabled
 }

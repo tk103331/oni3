@@ -413,26 +413,29 @@ func TestMouseToggleShortcut(t *testing.T) {
 	m := NewViewModel(func(string) error { return nil })
 	m = drive(m, tea.WindowSizeMsg{Width: 100, Height: 30})
 
-	enabled := false
-	m.SetMouseToggle(func() bool {
-		enabled = !enabled
+	state := true // capture starts enabled
+	m.SetMouseControl(func(enabled bool) bool {
+		state = enabled
 		return enabled
 	})
 
 	m = drive(m, tea.KeyMsg{Type: tea.KeyCtrlY})
-	if !enabled {
-		t.Fatal("first Ctrl+Y should enable mouse capture")
+	if state {
+		t.Fatal("first Ctrl+Y should disable mouse capture")
 	}
-	if !strings.Contains(m.View(), "鼠标捕获已启用") {
-		t.Fatalf("enable hint missing:\n%s", m.View())
-	}
-
-	m = drive(m, tea.KeyMsg{Type: tea.KeyCtrlY})
-	if enabled {
-		t.Fatal("second Ctrl+Y should disable mouse capture")
+	if m.mouseCaptured {
+		t.Fatal("model should track the released capture")
 	}
 	if !strings.Contains(m.View(), "鼠标捕获已关闭") {
 		t.Fatalf("disable hint missing:\n%s", m.View())
+	}
+
+	m = drive(m, tea.KeyMsg{Type: tea.KeyCtrlY})
+	if !state || !m.mouseCaptured {
+		t.Fatal("second Ctrl+Y should re-enable mouse capture")
+	}
+	if !strings.Contains(m.View(), "鼠标捕获已启用") {
+		t.Fatalf("enable hint missing:\n%s", m.View())
 	}
 }
 
@@ -520,6 +523,81 @@ func TestMouseClickLandsOnTheClickedRow(t *testing.T) {
 				t.Fatalf("click on row %d did not expand the tool block", row)
 			}
 		})
+	}
+}
+
+// A click outside the foldable regions releases the mouse capture so the
+// terminal's native selection takes over; sending the next message restores
+// it. A click on an expanded block's body also releases (and never folds):
+// body text is what the user usually wants to copy.
+func TestMouseClickOutsideFoldableRowsReleasesCapture(t *testing.T) {
+	var applied []bool
+	m := NewViewModel(func(string) error { return nil })
+	m = drive(m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m.SetMouseControl(func(enabled bool) bool {
+		applied = append(applied, enabled)
+		return enabled
+	})
+	m.SetTranscript([]Message{
+		{Type: UserMessage, Content: "question"},
+		{Type: ToolStartMessage, Name: "search", Arguments: `{"q":"x"}`, ToolStatus: ToolSuccess, Result: "the result"},
+	})
+	m.View()
+
+	rowOf := func(needle string) int {
+		frame := strings.Split(m.View(), "\n")
+		for i, line := range frame {
+			if strings.Contains(line, needle) {
+				return i
+			}
+		}
+		t.Fatalf("line %q not rendered", needle)
+		return -1
+	}
+
+	// Clicking the user message (not foldable) releases the capture.
+	m = drive(m, tea.MouseMsg{X: 5, Y: rowOf("question"), Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if m.mouseCaptured {
+		t.Fatal("click outside foldable rows should release the capture")
+	}
+	if len(applied) != 1 || applied[0] {
+		t.Fatalf("release should disable capture once: %v", applied)
+	}
+	if !strings.Contains(m.View(), "已释放鼠标捕获") {
+		t.Fatalf("release hint missing:\n%s", m.View())
+	}
+
+	// While released, further clicks do nothing (the terminal forwards no
+	// events, and the model must not call the control twice).
+	m = drive(m, tea.MouseMsg{X: 5, Y: rowOf("question"), Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if len(applied) != 1 {
+		t.Fatalf("clicks while released must not touch the capture: %v", applied)
+	}
+
+	// Sending the next message restores the capture silently.
+	m = drive(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")}, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.mouseCaptured || len(applied) != 2 || !applied[1] {
+		t.Fatalf("new turn should restore the capture: captured=%v applied=%v", m.mouseCaptured, applied)
+	}
+
+	// Expanding the tool block and clicking its body keeps the block open
+	// but releases the capture for copying.
+	m = drive(m, tea.MouseMsg{X: 5, Y: rowOf("Search"), Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if !m.expanded[1] {
+		t.Fatal("header click should expand the tool block")
+	}
+	if !m.mouseCaptured {
+		t.Fatal("header click must keep the capture")
+	}
+	m = drive(m, tea.MouseMsg{X: 5, Y: rowOf("the result"), Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if !m.expanded[1] {
+		t.Fatal("body click must not fold the block")
+	}
+	if m.mouseCaptured {
+		t.Fatal("body click should release the capture")
+	}
+	if !strings.Contains(m.View(), "the result") {
+		t.Fatalf("expanded body should stay visible:\n%s", m.View())
 	}
 }
 
